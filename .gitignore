@@ -1,0 +1,11 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+captures/
+
+# 모델 파일은 2GB 이상이라 저장소에 넣지 않는다. adb push 로 기기에 직접 넣는다.
+*.litertlm
+*.task
