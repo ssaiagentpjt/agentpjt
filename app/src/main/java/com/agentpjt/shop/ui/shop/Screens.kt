@@ -49,6 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.agentpjt.shop.shop.AiStatus
 import com.agentpjt.shop.shop.ITEM_PREFIX
 import com.agentpjt.shop.shop.Product
 import com.agentpjt.shop.shop.Scripts
@@ -81,9 +82,10 @@ private fun Title(text: String, modifier: Modifier = Modifier) {
 // 1. 처음 화면 -------------------------------------------------------------
 
 @Composable
-fun HomeScreen(onMic: () -> Unit, onExample: () -> Unit, onDevMenu: () -> Unit) {
+fun HomeScreen(s: ShopState, onMic: () -> Unit, onExample: (String) -> Unit, onDevMenu: () -> Unit, onToggleThinking: () -> Unit) {
     val c = ShopTheme.colors
     Page {
+        AiChip(s.ai, s.thinkingMode, onToggleThinking)
         // 제목을 길게 누르면 개발자 메뉴(Gemma 테스트). 어르신이 우연히 누를 일은 드물다.
         Title(
             "안녕하세요\n무엇을 사 드릴까요?",
@@ -94,20 +96,42 @@ fun HomeScreen(onMic: () -> Unit, onExample: () -> Unit, onDevMenu: () -> Unit) 
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            MicButton(onMic)
+            MicButton(onMic, enabled = s.ai == AiStatus.READY)
             Text("누르고 말씀하세요", style = MaterialTheme.typography.titleLarge, color = c.ink)
         }
         Text("이렇게 말해 보세요", fontSize = 16.sp, color = c.inkSoft)
-        ExampleSay("파스 2만 원 이하로 찾아줘", onExample)
-        ExampleSay("지난번에 산 쌀 또 사줘", onExample)
+        // 누르면 그 문장을 말한 것처럼 에이전트에 넘긴다. 말이 서툰 분과 시연을 위한 길.
+        EXAMPLES.forEach { ExampleSay(it, enabled = s.ai == AiStatus.READY) { onExample(it) } }
+    }
+}
+
+private val EXAMPLES = listOf("무릎 아플 때 붙이는 거 2만 원 안쪽으로", "아침에 마실 거 찾아줘")
+
+/** AI 준비 상태. 길게 누르면 생각 모드를 켜고 끈다(실측 비교용). */
+@Composable
+private fun AiChip(ai: AiStatus, thinking: Boolean, onLongPress: () -> Unit) {
+    val c = ShopTheme.colors
+    val (text, dot) = when (ai) {
+        AiStatus.LOADING -> "AI 준비 중" to c.inkSoft
+        AiStatus.READY -> (if (thinking) "AI 준비됨 · 생각 모드" else "AI 준비됨") to c.ok
+        AiStatus.UNAVAILABLE -> "AI를 쓸 수 없어요 · 화면을 눌러 이용하세요" to c.speakInk
+    }
+    Row(
+        Modifier.clip(RoundedCornerShape(50)).background(if (ai == AiStatus.UNAVAILABLE) c.speak else c.voiceTint)
+            .pointerInput(Unit) { detectTapGestures(onLongPress = { onLongPress() }) }
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(Modifier.size(10.dp).clip(CircleShape).background(dot))
+        Text(text, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = if (ai == AiStatus.UNAVAILABLE) c.speakInk else c.ink)
     }
 }
 
 @Composable
-private fun ExampleSay(text: String, onClick: () -> Unit) {
+private fun ExampleSay(text: String, enabled: Boolean, onClick: () -> Unit) {
     val c = ShopTheme.colors
     OutlinedButton(
-        onClick = onClick, modifier = Modifier.fillMaxWidth(),
+        onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp), border = BorderStroke(2.dp, c.line),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp, 14.dp),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = c.ink),
@@ -122,7 +146,7 @@ private fun ExampleSay(text: String, onClick: () -> Unit) {
 fun ListeningScreen(s: ShopState, onDone: () -> Unit, onCancel: () -> Unit) {
     val c = ShopTheme.colors
     Page(bottom = {
-        BigButton("다 말했어요", onDone, enabled = !s.searching)
+        BigButton("다 말했어요", onDone, enabled = !s.agentBusy)
         BigButton("그만하기", onCancel, primary = false)
     }) {
         Column(
@@ -135,7 +159,7 @@ fun ListeningScreen(s: ShopState, onDone: () -> Unit, onCancel: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Box(Modifier.size(10.dp).clip(CircleShape).background(c.voice))
-                Text(if (s.searching) "찾고 있어요" else "듣고 있어요", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = c.ink)
+                Text(if (s.agentBusy) "생각하고 있어요" else "듣고 있어요", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = c.ink)
             }
             Box(contentAlignment = Alignment.Center) {
                 Rings()
@@ -166,15 +190,15 @@ private fun Rings() {
 // 3. 추천 상품 --------------------------------------------------------------
 
 @Composable
-fun ResultsScreen(s: ShopState, speakingId: String?, onPick: (Int) -> Unit, onStopReading: () -> Unit) {
+fun ResultsScreen(s: ShopState, speakingId: String?, onPick: (Int) -> Unit, onStopReading: () -> Unit, onMic: () -> Unit) {
     val c = ShopTheme.colors
     val readingIndex = speakingId?.removePrefix(ITEM_PREFIX)?.toIntOrNull()?.takeIf { speakingId.startsWith(ITEM_PREFIX) }
-    Page {
-        Title("${withObjectParticle(s.keyword)}\n${s.products.size}개 찾았어요")
+    Page(bottom = { SpeakButton(onMic, s.ai == AiStatus.READY) }) {
+        Title("${withObjectParticle(s.label)}\n${s.shown.size}개 골랐어요")
         if (speakingId != null) {
             ReadingBar(if (readingIndex != null) "${readingIndex + 1}번째를 읽고 있어요" else "읽어 드리고 있어요", onStopReading)
         }
-        s.products.forEachIndexed { i, p -> ProductCard(i, p, highlighted = i == readingIndex) { onPick(i) } }
+        s.shown.forEachIndexed { i, p -> ProductCard(i, p, highlighted = i == readingIndex) { onPick(i) } }
         Text(
             "쿠팡 파트너스 활동의 일환으로 수수료를 받을 수 있습니다. (연동 시 표시 자리)",
             fontSize = 13.sp, color = c.inkSoft,
@@ -212,12 +236,13 @@ private fun ProductCard(index: Int, p: Product, highlighted: Boolean, onClick: (
 // 4. 상품 자세히 -------------------------------------------------------------
 
 @Composable
-fun DetailScreen(s: ShopState, onQty: (Int) -> Unit, onOrder: () -> Unit, onOthers: () -> Unit) {
+fun DetailScreen(s: ShopState, onQty: (Int) -> Unit, onOrder: () -> Unit, onOthers: () -> Unit, onMic: () -> Unit) {
     val c = ShopTheme.colors
-    val p = s.product
+    val p = s.current ?: return
     Page(bottom = {
         BigButton("주문하기", onOrder)
-        BigButton("다른 상품 보기", onOthers, primary = false)
+        SpeakButton(onMic, s.ai == AiStatus.READY)
+        if (s.shown.isNotEmpty()) BigButton("다른 상품 보기", onOthers, primary = false)
     }) {
         Box(
             Modifier.fillMaxWidth().aspectRatio(4f / 3f).clip(RoundedCornerShape(18.dp)).background(c.voiceTint),
@@ -257,9 +282,9 @@ private fun PatchPicture(modifier: Modifier) {
 // 5. 주문 확인 --------------------------------------------------------------
 
 @Composable
-fun ConfirmScreen(s: ShopState, onYes: () -> Unit, onNo: () -> Unit) {
+fun ConfirmScreen(s: ShopState, onYes: () -> Unit, onNo: () -> Unit, onMic: () -> Unit) {
     val c = ShopTheme.colors
-    val p = s.product
+    val p = s.current ?: return
     val total = Scripts.total(p, s.qty)
     Page(bottom = {
         // "아니요"도 같은 크기. 작은 취소 버튼은 잘못 누르기 쉽다.
@@ -267,6 +292,7 @@ fun ConfirmScreen(s: ShopState, onYes: () -> Unit, onNo: () -> Unit) {
             BigButton("네, 주문", onYes, Modifier.weight(1f), minHeight = 76.dp)
             BigButton("아니요", onNo, Modifier.weight(1f), primary = false, minHeight = 76.dp)
         }
+        SpeakButton(onMic, s.ai == AiStatus.READY)
     }) {
         Title("이대로 주문할까요?")
         Fact("상품", "${p.name} · ${s.qty}개")
@@ -303,7 +329,7 @@ fun DoneScreen(s: ShopState, onHome: () -> Unit) {
             }
             Title("주문했어요")
             Text(
-                "${s.product.arriveLabel}에 도착해요\n가족께 알렸어요",
+                "${s.current?.arriveLabel}에 도착해요\n가족께 알렸어요",
                 fontSize = 19.sp, lineHeight = 28.sp, color = c.inkSoft, textAlign = TextAlign.Center,
             )
         }

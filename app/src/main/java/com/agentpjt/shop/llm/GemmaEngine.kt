@@ -50,6 +50,10 @@ class GemmaEngine(private val modelFile: File, private val cacheDir: File) {
         conversation = e.createConversation(ConversationConfig())
     }
 
+    /** 도구·시스템 지시문을 가진 별도 대화를 연다. 닫는 책임은 호출한 쪽에 있다. */
+    fun newConversation(config: ConversationConfig): Conversation =
+        checkNotNull(engine) { "모델이 로드되지 않았다" }.createConversation(config)
+
     /** 응답을 조각 단위로 흘려보낸다. */
     fun generate(prompt: String): Flow<String> {
         val c = checkNotNull(conversation) { "모델이 로드되지 않았다" }

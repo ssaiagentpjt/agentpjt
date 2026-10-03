@@ -106,6 +106,21 @@ fun MicButton(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boole
     ) { MicIcon(c.voiceInk, Modifier.size(64.dp)) }
 }
 
+/** 추천·상세·확인 화면 아래의 "말로 하기" 버튼. 마이크 그림 + 글자. */
+@Composable
+fun SpeakButton(onClick: () -> Unit, enabled: Boolean) {
+    val c = ShopTheme.colors
+    OutlinedButton(
+        onClick = onClick, enabled = enabled,
+        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp),
+        shape = RoundedCornerShape(16.dp), border = BorderStroke(2.dp, c.voice),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = c.voice),
+    ) {
+        MicIcon(c.voice, Modifier.size(28.dp))
+        Text("  말로 하기", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+    }
+}
+
 /** 지금 읽고 있다는 노란 띠. 막대 셋이 오르내린다. */
 @Composable
 fun ReadingBar(text: String, onStop: () -> Unit) {

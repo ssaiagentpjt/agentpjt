@@ -14,10 +14,19 @@ object Scripts {
         Utterance("home", "안녕하세요. 무엇을 사 드릴까요? 가운데 파란 버튼을 누르고 말씀해 주세요."),
     )
 
-    fun searching() = listOf(Utterance("searching", "찾고 있어요. 잠시만 기다려 주세요."))
+    fun thinking() = listOf(Utterance("thinking", "알아볼게요."))
 
-    fun results(keyword: String, products: List<Product>): List<Utterance> =
-        listOf(Utterance("results-intro", "${withObjectParticle(keyword)} ${koCount(products.size)} 개 찾았어요.")) +
+    fun notHeard() = listOf(Utterance("not-heard", "잘 못 들었어요. 다시 말씀해 주세요."))
+
+    fun aiUnavailable() = listOf(Utterance("ai-unavailable", "지금은 말로 도와 드리기 어려워요. 화면을 눌러서 이용해 주세요."))
+
+    fun agentFailed() = listOf(Utterance("agent-failed", "죄송해요, 잘 알아듣지 못했어요. 다르게 말씀해 주세요."))
+
+    /** 모델이 도구 없이 한 말(되묻기 등). 모델 문장을 그대로 읽는다. */
+    fun say(text: String) = listOf(Utterance("say", text))
+
+    fun results(label: String, products: List<Product>): List<Utterance> =
+        listOf(Utterance("results-intro", "${withObjectParticle(label)} ${koCount(products.size)} 개 골랐어요.")) +
             products.take(3).mapIndexed { i, p ->
                 Utterance("$ITEM_PREFIX$i", "${ORDINALS[i]} 번째, ${p.name}, ${readWon(p.price)}, ${p.arriveSpoken} 도착해요.")
             } +
@@ -35,7 +44,7 @@ object Scripts {
     fun confirm(p: Product, qty: Int) = listOf(
         Utterance(
             "confirm",
-            "${p.name.substringBeforeLast(' ')} ${koCount(qty)} 개, 배송비 포함 ${readWon(total(p, qty))}입니다. " +
+            "${p.name}, ${koCount(qty)} 개, 배송비 포함 ${readWon(total(p, qty))}입니다. " +
                 "국민카드로 결제할까요? 네라고 말씀하시거나 아래 버튼을 눌러 주세요.",
         ),
     )
