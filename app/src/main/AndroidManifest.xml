@@ -1,8 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Android 11+ 패키지 가시성: 이 선언이 없으면 TTS 엔진에 연결하지 못한다 (공식 package visibility 문서) -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <application
-        android:label="Gemma 탑재 테스트"
+        android:label="말로장보기"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
         <!-- LiteRT-LM GPU 백엔드용 (공식 가이드). 없는 기기에서도 설치되도록 required=false -->
