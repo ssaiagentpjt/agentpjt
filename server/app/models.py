@@ -354,6 +354,8 @@ class PrepareOut(BaseModel):
     items: list[PreparedItemOut]
     totalPrice: int = Field(description="모든 줄 합계(원)")
     totalSpoken: str = Field(description="합계를 읽는 말", examples=["만 칠천팔백 원"])
+    summaryText: str = Field(description="확인 화면에서 읽어 줄 한 줄", examples=[
+        "새치 염색약 1회분 흑갈색 두 개, 배송비 포함 만 칠천팔백 원이에요. 내일 도착해요. 주문할까요?"])
 
 
 class ConfirmIn(BaseModel):
@@ -367,6 +369,9 @@ class ConfirmOut(BaseModel):
     orders: list[OrderOut] = Field(description="줄마다 하나씩 만든 주문(prepare 의 줄 순서)")
     totalPrice: int
     alreadyConfirmed: bool = Field(description="이미 확정된 토큰이면 true. 새 주문 없이 그때 만든 주문을 그대로 돌려준다")
+    arriveSpoken: str = Field(description="도착일을 읽는 말. 줄마다 다르면 가장 늦은 날", examples=["내일", "늦어도 10월 8일 목요일에"])
+    summaryText: str = Field(description="주문 완료 때 읽어 줄 한 줄", examples=[
+        "주문했어요. 새치 염색약 1회분 흑갈색 두 개, 모두 만 칠천팔백 원이에요. 내일 도착해요."])
 
 
 # ---- 취소 --------------------------------------------------------------------
@@ -382,3 +387,5 @@ class CancelOut(BaseModel):
     order: OrderOut = Field(description="취소한 주문(status 가 CANCELLED)")
     cancelledAt: str = Field(description="취소 시각(KST, ISO 8601)")
     refundPrice: int = Field(description="돌려줄 금액(원). 목업이라 실제 환불은 없다")
+    summaryText: str = Field(description="취소 때 읽어 줄 한 줄", examples=[
+        "새치 염색약 1회분 주문을 취소했어요. 만 칠천팔백 원은 돌려 드려요."])

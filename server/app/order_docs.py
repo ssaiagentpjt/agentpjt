@@ -18,6 +18,10 @@ FLOW = """
    같은 토큰을 다시 보내면 **새 주문 없이** 그때 만든 주문을 `alreadyConfirmed: true` 로 돌려줍니다.
 
 토큰은 10분 뒤 만료되고, 같은 사용자가 prepare 를 다시 하면 앞의 토큰은 무효가 됩니다.
+주문한 뒤 되돌리려면 `POST /orders/{orderId}/cancel` 로 취소합니다(재고도 돌아옵니다).
+
+prepare·confirm·cancel 응답의 `summaryText` 는 **그대로 읽어 주는 한 줄**입니다. 금액·수량·도착일을 읽는 말로 바꿔 두었으므로
+모델이 숫자를 직접 읽지 않아도 됩니다. 예: "주문했어요. 무릎 보호대 2개입 L 한 개, 모두 만 팔천구백 원이에요. 모레 도착해요."
 오류 본문의 `detail.code` 로 앱이 갈래를 나눕니다: `MISSING_OPTION` 되묻기 · `OUT_OF_STOCK` 다른 상품 권하기 · `TOKEN_*` 확인부터 다시.
 """
 

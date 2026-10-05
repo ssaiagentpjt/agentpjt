@@ -21,7 +21,7 @@ from fastapi import Path as PathParam
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 
-from . import docs, order_docs
+from . import docs, order_docs, summary
 from .models import (
     BatchOrderIn,
     BatchOrderOut,
@@ -42,8 +42,9 @@ from .models import (
 from .search import Audience, Sort, Tier
 from .speech import read_won
 from .store import DEFAULT_DATA_DIR, STATIC_DIR, OrderError, Store, now_kst
+from .summary import SpokenLine
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 View = Literal["compact", "full"]
 log = logging.getLogger("shop")
 
@@ -194,7 +195,9 @@ def create_app(
         items = [PreparedItemOut(productId=x.product_id, productName=x.name, options=x.options, quantity=x.quantity,
                                  unitPrice=x.unit_price, shippingFee=x.shipping_fee, totalPrice=x.total) for x in lines]
         total = sum(x.totalPrice for x in items)
-        return PrepareOut(confirmToken=token, expiresAt=expires, items=items, totalPrice=total, totalSpoken=read_won(total))
+        spoken = [SpokenLine(x.name, x.options, x.quantity, x.delivery_days) for x in lines]
+        return PrepareOut(confirmToken=token, expiresAt=expires, items=items, totalPrice=total, totalSpoken=read_won(total),
+                          summaryText=summary.prepared(spoken, total, store.clock().date()))
 
     @app.post("/orders/confirm", tags=["주문"], dependencies=auth, **{**order_docs.CONFIRM, "responses": {
         **docs.UNAUTHORIZED, **order_docs.CONFIRM["responses"]}})
@@ -204,7 +207,12 @@ def create_app(
         except OrderError as e:
             raise HTTPException(status_code=e.status, detail=e.detail) from e
         orders = [OrderOut(**r) for r in rows]
-        return ConfirmOut(orders=orders, totalPrice=sum(o.totalPrice for o in orders), alreadyConfirmed=already)
+        total = sum(o.totalPrice for o in orders)
+        days = store.delivery_days([o.productId for o in orders])
+        spoken = [SpokenLine(o.productName, o.options, o.quantity, days.get(o.productId, 1)) for o in orders]
+        # 도착일은 주문한 날 기준이다. 같은 토큰을 다음 날 다시 보내도 같은 요약이 나온다
+        text, when = summary.confirmed(spoken, total, datetime.fromisoformat(orders[0].orderedAt).date())
+        return ConfirmOut(orders=orders, totalPrice=total, alreadyConfirmed=already, arriveSpoken=when, summaryText=text)
 
     @app.post("/orders/{order_id}/cancel", tags=["주문"], dependencies=auth, **{**order_docs.CANCEL, "responses": {
         **docs.UNAUTHORIZED, **order_docs.CANCEL["responses"]}})
@@ -216,7 +224,8 @@ def create_app(
             row = store.cancel(body.userId, order_id)
         except OrderError as e:
             raise HTTPException(status_code=e.status, detail=e.detail) from e
-        return CancelOut(order=OrderOut(**row), cancelledAt=row["cancelledAt"], refundPrice=row["totalPrice"])
+        return CancelOut(order=OrderOut(**row), cancelledAt=row["cancelledAt"], refundPrice=row["totalPrice"],
+                         summaryText=summary.cancelled(row["productName"], row["totalPrice"]))
 
     @app.get("/users/{user_id}/orders", tags=["주문"], summary="구매 이력", dependencies=auth, responses=docs.UNAUTHORIZED)
     def orders(

@@ -481,6 +481,11 @@ class Store:
         ).fetchall()
         return [{**dict(r), "options": json.loads(r["options"] or "{}")} for r in rows]
 
+    def delivery_days(self, product_ids: list[str]) -> dict[str, int]:
+        """{상품 id: 배송 일수}. 요약의 도착일에 쓴다. 단종된 상품은 빠진다."""
+        marks = ",".join("?" * len(product_ids))
+        return {r[0]: r[1] for r in self.conn.execute(f"select id, delivery_days from products where id in ({marks})", product_ids)}
+
     def orders_of(self, user_id: str, limit: int) -> list[dict]:
         return self._orders_where("o.userId = ?", (user_id,), limit)
 

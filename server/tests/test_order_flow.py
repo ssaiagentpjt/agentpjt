@@ -317,3 +317,40 @@ def test_order_without_ledger_cancels_without_restock(db_path, clock):
                      " values ('M-OLD-1', 'u1', 'p03003', 2, 40000, '2026-10-01T10:00:00+09:00')")
     assert cancel(c1, "M-OLD-1").status_code == 200
     assert stock(c1, "p03003")["quantity"] == before
+
+
+# ---- 요약 (G-05) ----
+# 시계는 2026-10-05(월). p07002 무릎 보호대는 2일(모레), p03003 관절 플라스타는 3일(10월 8일 목요일) 걸린다
+
+
+def test_prepare_summary_reads_item_total_and_arrival(client):
+    body = prepare(client, ("p07002", 2, {"사이즈": "XL"})).json()
+    assert body["summaryText"] == "무릎 보호대 2개입 XL 두 개, 배송비 포함 삼만 칠천팔백 원이에요. 모레 도착해요. 주문할까요?"
+
+
+def test_confirm_summary_for_several_lines(client):
+    token = prepare(client, ("p07002", 1, {"사이즈": "M"}), ("p03003", 1, {})).json()["confirmToken"]
+    body = confirm(client, token).json()
+    assert body["arriveSpoken"] == "늦어도 10월 8일 목요일에"
+    assert body["summaryText"] == (
+        "주문했어요. 무릎 보호대 2개입 M 한 개 외 한 가지, 모두 삼만 팔천사백 원이에요. 늦어도 10월 8일 목요일에 도착해요.")
+
+
+def test_reconfirm_next_day_gives_same_summary(client, clock):
+    token = prepare(client, ("p07002", 1, {"사이즈": "L"})).json()["confirmToken"]
+    first = confirm(client, token).json()
+    clock.advance(days=1)
+    again = confirm(client, token).json()
+    assert again["alreadyConfirmed"] and again["summaryText"] == first["summaryText"]
+    assert first["arriveSpoken"] == "모레"
+
+
+def test_cancel_summary(client):
+    oid = order(client, "p03003").json()["orderId"]
+    assert cancel(client, oid).json()["summaryText"] == "관절 플라스타 34매 주문을 취소했어요. 이만 천오백 원은 돌려 드려요."
+
+
+def test_confirm_response_stays_small(client):
+    # 온디바이스 모델 입력으로 들어가므로 한 줄 주문의 확정 응답은 1KB 안쪽으로 둔다
+    token = prepare(client, ("p07002", 1, {"사이즈": "L"})).json()["confirmToken"]
+    assert len(confirm(client, token).content) < 1024
