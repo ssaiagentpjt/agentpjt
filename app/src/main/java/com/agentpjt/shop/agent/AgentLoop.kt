@@ -3,6 +3,7 @@ package com.agentpjt.shop.agent
 import android.util.Log
 import com.agentpjt.shop.shop.CartLine
 import com.agentpjt.shop.shop.ShopState
+import com.agentpjt.shop.shop.Step
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -42,13 +43,14 @@ class AgentLoop(
     suspend fun reset() = lock.withLock { decider.reset() }
 
     /**
-     * [onProgress] 는 관찰 행동을 시작할 때(말하기 화면 진행 표시), [onCart] 는 관찰 행동이 장바구니를 바꿨을 때 부른다
+     * [onStep] 은 관찰 행동을 시작할 때와 그 결과를 받고 다음 행동을 고를 때(찾는 중 화면 단계),
+     * [onCart] 는 관찰 행동이 장바구니를 바꿨을 때 부른다
      * (턴이 끝나기 전에도 화면의 장바구니 개수가 바로 바뀌게).
      */
     suspend fun handle(
         heard: String,
         state: ShopState,
-        onProgress: (String) -> Unit = {},
+        onStep: (Step) -> Unit = {},
         onCart: (List<CartLine>) -> Unit = {},
     ): AgentTurn = lock.withLock {
         if (decider.tokenCount() > maxTokens) {
@@ -81,7 +83,7 @@ class AgentLoop(
                 is Action.Answer -> return@withLock AgentTurn.Said(s, action.text)
                 else -> Unit
             }
-            if (action.kind.observes) onProgress(progressText(action))
+            if (action.kind.observes) onStep(step(action))
 
             val out = executor.execute(action, s)
             s = out.state
@@ -89,6 +91,7 @@ class AgentLoop(
 
             if (action.kind.observes) {
                 if (out.state.cart != state.cart) onCart(out.state.cart)
+                onStep(Step("다음 할 일을 고르는 중", "다음 할 일을 골랐어요"))
                 message = out.result // 결과(실패 사유 포함)를 사실로 돌려주고 다음 행동은 모델이 고른다
                 return@repeat
             }
@@ -99,13 +102,13 @@ class AgentLoop(
         AgentTurn.Failed(s, AgentTurn.Reason.STEP_LIMIT)
     }
 
-    private fun progressText(a: Action) = when (a) {
-        is Action.Search -> "'${a.query}' 찾고 있어요"
-        is Action.Info -> "상품 정보를 보고 있어요"
-        Action.History -> "지난 구매를 보고 있어요"
-        is Action.CartAdd -> "장바구니에 담고 있어요"
-        is Action.CartRemove, is Action.CartQuantity -> "장바구니를 고치고 있어요"
-        else -> ""
+    private fun step(a: Action) = when (a) {
+        is Action.Search -> Step("'${a.query}' 찾고 있어요", "'${a.query}'를 찾았어요")
+        is Action.Info -> Step("상품 정보를 보고 있어요", "상품 정보를 봤어요")
+        Action.History -> Step("지난 구매를 보고 있어요", "지난 구매를 봤어요")
+        is Action.CartAdd -> Step("장바구니에 담고 있어요", "장바구니를 확인했어요")
+        is Action.CartRemove, is Action.CartQuantity -> Step("장바구니를 고치고 있어요", "장바구니를 고쳤어요")
+        else -> Step("", "")
     }
 
     private fun elapsed(start: Long) = (System.nanoTime() - start) / 1_000_000

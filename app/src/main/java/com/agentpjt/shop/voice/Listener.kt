@@ -44,6 +44,10 @@ class Listener(private val context: Context) {
     private val _state = MutableStateFlow<ListenState>(ListenState.Idle)
     val state: StateFlow<ListenState> = _state
 
+    /** 쉼이 이어지면 듣기를 끝낼 시각(epoch ms). 0 이면 말하는 중이거나 아직 아무 말도 없다. 듣는 중 화면의 막대가 쓴다 */
+    private val _pauseUntil = MutableStateFlow(0L)
+    val pauseUntil: StateFlow<Long> = _pauseUntil
+
     private var recognizer: SpeechRecognizer? = null
     private val main = Handler(Looper.getMainLooper())
 
@@ -81,6 +85,7 @@ class Listener(private val context: Context) {
 
     fun cancel() {
         active = false
+        _pauseUntil.value = 0
         main.removeCallbacksAndMessages(null)
         recognizer?.cancel()
         _state.value = ListenState.Idle
@@ -119,8 +124,10 @@ class Listener(private val context: Context) {
             said.isEmpty() && elapsed() > FIRST_WORD_MS -> finish("no speech")
             else -> {
                 if (said.isNotEmpty()) {
+                    val wait = (PAUSE_MS - (System.currentTimeMillis() - lastSpeechAt)).coerceAtLeast(0)
                     main.removeCallbacks(finishByPause)
-                    main.postDelayed(finishByPause, (PAUSE_MS - (System.currentTimeMillis() - lastSpeechAt)).coerceAtLeast(0))
+                    main.postDelayed(finishByPause, wait)
+                    _pauseUntil.value = System.currentTimeMillis() + wait
                 }
                 listen()
             }
@@ -130,6 +137,7 @@ class Listener(private val context: Context) {
     private fun finish(why: String) {
         if (!active) return
         active = false
+        _pauseUntil.value = 0
         main.removeCallbacksAndMessages(null)
         recognizer?.cancel()
         val text = said.toString()
@@ -146,12 +154,14 @@ class Listener(private val context: Context) {
 
         override fun onBeginningOfSpeech() {
             main.removeCallbacks(finishByPause) // 다시 말하기 시작했다 — 끝내지 않는다
+            _pauseUntil.value = 0
         }
 
         override fun onPartialResults(partialResults: Bundle?) {
             val text = partialResults.firstResult() ?: return
             if (!active || text.isBlank()) return
             main.removeCallbacks(finishByPause)
+            _pauseUntil.value = 0
             lastSpeechAt = System.currentTimeMillis()
             _state.value = ListenState.Partial(if (said.isEmpty()) text else "$said $text")
         }

@@ -4,6 +4,26 @@ enum class Screen { Home, Listening, Results, Detail, Cart, Confirm, Done, Histo
 
 enum class AiStatus { LOADING, READY, UNAVAILABLE }
 
+/** 첫 실행 단계. DONE 이 되기 전에는 쇼핑 화면 대신 인트로·설치 화면을 띄운다(나중에 받기를 고르면 [Setup.later]) */
+enum class SetupPhase { BOOT, NEED, DOWNLOADING, VERIFYING, FAILED, DONE }
+
+data class Setup(
+    val phase: SetupPhase = SetupPhase.BOOT,
+    val done: Long = 0,
+    val total: Long = 0,
+    /** 남은 시간(초). 받는 속도로 어림한다 */
+    val etaSec: Long? = null,
+    /** 연결을 기다리는 중(시스템 다운로더가 일시 정지) */
+    val waiting: Boolean = false,
+    val freeBytes: Long = 0,
+    val connected: Boolean = true,
+    /** Wi-Fi 등 요금이 안 드는 연결 */
+    val unmetered: Boolean = true,
+    val error: String? = null,
+    /** 받는 동안 쇼핑 화면으로 나갔다(받기는 계속된다) */
+    val later: Boolean = false,
+)
+
 /** 시연 사용자. 서버 seed_orders.json 에 지난 구매 5건이 들어 있다. */
 const val DEMO_USER_ID = "u001"
 const val DEMO_USER_NAME = "홍길순"
@@ -13,6 +33,9 @@ const val DEMO_USER_NAME = "홍길순"
  * [options] 는 아는 경우의 옵션 축 → 고를 수 있는 값. 장바구니에 담을 때 스키마 enum 이 된다.
  */
 data class KnownProduct(val id: String, val name: String, val options: Map<String, List<String>> = emptyMap())
+
+/** 에이전트가 한 단계에서 하는 일. 찾는 중 화면에 쌓인다(앞 단계는 done 글로 보인다) */
+data class Step(val doing: String, val done: String)
 
 /** 화면에 띄웠던 목록. "아까 처음 나온 거"처럼 앞 목록을 가리킬 근거다 */
 data class ShownList(val label: String, val items: List<KnownProduct>)
@@ -57,8 +80,16 @@ data class ShopState(
     val heard: String = "",
     /** 에이전트가 판단하는 중이거나, 터치 동작이 서버를 기다리는 중 */
     val agentBusy: Boolean = false,
-    /** 에이전트가 지금 하는 일(말하기 화면에 보인다). 예: "'두유' 찾고 있어요" */
-    val progress: String = "",
+    /** 이번 발화에서 에이전트가 거친 단계. 마지막이 지금 하는 일이다. 예: "'두유' 찾고 있어요" */
+    val steps: List<Step> = emptyList(),
+    /** 대화 띠: 마지막으로 들은 말(다음에 말하기 시작할 때까지 남는다) */
+    val lastHeard: String = "",
+    /** 마지막 말이 글자로 쓴 것이다(대화 띠에 "쓴 말"로 보인다) */
+    val heardTyped: Boolean = false,
+    /** 글자로 쓰기 입력 칸이 열려 있다 */
+    val typing: Boolean = false,
+    /** 대화 띠: 손주야가 마지막으로 한 말(앱 대본의 첫 문장, 또는 ask·answer) */
+    val said: String = "",
     /** 손주야가 화면을 바꾸지 않고 한 말(ask·answer). 말풍선으로 보인다 */
     val bubble: String = "",
     /** 담으려는데 빠진 옵션 축. 상세 화면에서 강조한다 */
@@ -66,6 +97,7 @@ data class ShopState(
     /** 말하기를 시작한 화면. 에이전트가 화면을 바꾸지 않으면 여기로 돌아간다 */
     val returnTo: Screen = Screen.Home,
     val ai: AiStatus = AiStatus.LOADING,
+    val setup: Setup = Setup(),
     val micDenied: Boolean = false,
     /** 마지막 서버 호출이 네트워크 오류였다(안내 띠) */
     val offline: Boolean = false,
@@ -82,7 +114,7 @@ data class ShopState(
     }
 
     /** 처음 화면으로: 세션 상태는 비우고 장바구니와 앱 상태만 남긴다 */
-    fun freshSession(): ShopState = ShopState(ai = ai, micDenied = micDenied, cart = cart)
+    fun freshSession(): ShopState = ShopState(ai = ai, micDenied = micDenied, cart = cart, setup = setup)
 }
 
 fun ProductSummary.known() = KnownProduct(id, name, options)

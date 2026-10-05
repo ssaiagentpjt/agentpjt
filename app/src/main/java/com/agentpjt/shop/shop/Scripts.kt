@@ -11,8 +11,14 @@ private val ORDINALS = listOf("첫", "두", "세")
 object Scripts {
 
     fun home() = listOf(
-        Utterance("home", "안녕하세요, 손주야예요. 무엇을 사 드릴까요? 가운데 파란 버튼을 누르고 말씀해 주세요."),
+        Utterance("home", "안녕하세요, 손주야예요. 무엇을 사 드릴까요? 화면 아래 파란 버튼을 누르고 말씀해 주세요."),
     )
+
+    fun setupNeeded() = listOf(
+        Utterance("setup", "손주야예요. 처음 한 번, AI 파일을 받아야 해요. 화면 아래 설치하기를 눌러 주세요."),
+    )
+
+    fun setupFailed(message: String) = listOf(Utterance("setup-failed", message))
 
     fun thinking() = listOf(Utterance("thinking", "알아볼게요."))
 

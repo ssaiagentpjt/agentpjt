@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 12+ 는 앱을 켤 때 시스템 스플래시를 반드시 띄운다. 로고와 바탕색만 채운다(core-splashscreen 없이 플랫폼 속성으로). -->
+    <style name="Theme.Sonjuya" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowSplashScreenBackground">@color/brand</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_logo_foreground</item>
+    </style>
+</resources>

@@ -45,8 +45,8 @@ class AgentLoopTest {
     @Test
     fun observation_feedsResultBack_andSchemaIsRecomputed() = runTest {
         val d = FakeDecider("""{"action":"search","query":"x"}""", """{"action":"show","ids":["p02"],"label":"찾은 것"}""")
-        val progress = mutableListOf<String>()
-        val turn = loop(d).handle("아무 말", ShopState(), onProgress = { progress += it })
+        val steps = mutableListOf<String>()
+        val turn = loop(d).handle("아무 말", ShopState(), onStep = { steps += it.doing })
 
         assertTrue(turn is AgentTurn.Moved)
         assertEquals(Screen.Results, turn.state.screen)
@@ -54,7 +54,7 @@ class AgentLoopTest {
         assertTrue(d.messages[1], d.messages[1].startsWith("(앱) 'x' 검색 결과"))
         assertFalse("show" in d.schemas[0].actions()) // 후보가 없을 때는 show 가 없다
         assertTrue("show" in d.schemas[1].actions()) // 검색 뒤에 생긴다
-        assertEquals(listOf("'x' 찾고 있어요"), progress)
+        assertEquals(listOf("'x' 찾고 있어요", "다음 할 일을 고르는 중"), steps)
     }
 
     @Test

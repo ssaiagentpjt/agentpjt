@@ -15,12 +15,14 @@ import com.agentpjt.shop.agent.systemPrompt
 import com.agentpjt.shop.api.HttpShopApi
 import com.agentpjt.shop.llm.BackendKind
 import com.agentpjt.shop.llm.GemmaEngine
+import com.agentpjt.shop.llm.ModelInstaller
 import com.agentpjt.shop.voice.ListenState
 import com.agentpjt.shop.voice.Listener
 import com.agentpjt.shop.voice.Speaker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -33,8 +35,6 @@ import java.io.File
 
 private const val TAG = "ShopAgent"
 
-// 1단계 실측: 이 기기(Adreno 730)에서 GPU 빌드는 출력이 깨져서 범용 파일을 CPU 로 돌린다
-private const val MODEL_FILE = "gemma-4-E2B-it.litertlm"
 
 class ShopViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -45,6 +45,9 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
     private val executor = ToolExecutor(HttpShopApi(BuildConfig.SHOP_API_BASE_URL, BuildConfig.SHOP_API_KEY))
 
     private val cartStore = CartStore(File(app.filesDir, "cart.json"))
+    // 1단계 실측: 이 기기(Adreno 730)에서 GPU 빌드는 출력이 깨져서 범용 파일을 CPU 로 돌린다
+    private val installer = ModelInstaller(app)
+    private var downloadJob: Job? = null
 
     private val _state = MutableStateFlow(ShopState(cart = cartStore.load()))
     val state: StateFlow<ShopState> = _state
@@ -57,8 +60,7 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
     // ViewModel 은 회전·폴드 펼침에서도 살아남으므로 여기서 한 번만 읽기 시작한다.
     init {
         if (BuildConfig.SHOP_API_KEY.isBlank()) Log.w(TAG, "SHOP_API_KEY 가 비어 있다 — local.properties 에 shop.apiKey 를 넣어야 서버가 응답한다")
-        speaker.speak(Scripts.home())
-        viewModelScope.launch { loadModel() }
+        viewModelScope.launch { boot() }
         viewModelScope.launch { listener.state.collect(::onListen) }
         // 장바구니가 바뀔 때마다 파일에 둔다. 말로 바꾸든 터치로 바꾸든 상태 하나만 보면 된다
         viewModelScope.launch {
@@ -66,14 +68,92 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private suspend fun loadModel() {
-        val dir = getApplication<Application>().getExternalFilesDir(null)
-        val file = dir?.let { File(it, MODEL_FILE) }
-        if (file == null || !file.exists()) {
-            Log.w(TAG, "model missing: ${file?.absolutePath}")
-            _state.update { it.copy(ai = AiStatus.UNAVAILABLE) }
-            return
+    // ---- 첫 실행: 인트로 → (AI 파일 설치) → 처음 화면 ------------------------------
+
+    /** 인트로는 실제로 준비되는 동안만 보인다. 일부러 늦추지 않는다 */
+    private suspend fun boot() {
+        when {
+            installer.isInstalled() -> {
+                loadModel(installer.modelFile)
+                setupDone()
+            }
+            installer.hasDownload() -> watchDownload()
+            else -> needModel()
         }
+    }
+
+    private fun needModel(error: String? = null) {
+        val (connected, unmetered) = installer.network()
+        _state.update {
+            it.copy(setup = it.setup.copy(
+                phase = if (error != null) SetupPhase.FAILED else SetupPhase.NEED, error = error,
+                freeBytes = installer.freeBytes(), connected = connected, unmetered = unmetered,
+            ))
+        }
+        say(if (error != null) Scripts.setupFailed(error) else Scripts.setupNeeded())
+    }
+
+    /** 설치 안내 화면의 "설치하기"·실패 화면의 "다시 받기" */
+    fun installModel() {
+        if (!installer.network().first) return needModel("인터넷에 연결되어 있지 않아요. 연결한 뒤 다시 눌러 주세요.")
+        if (!installer.enoughSpace()) return needModel("저장 공간이 모자라요. 3GB 이상 비운 뒤 다시 눌러 주세요.")
+        installer.start()
+        speaker.stop()
+        watchDownload()
+    }
+
+    /** 받는 동안 쇼핑 화면으로 나간다. 받기는 시스템이 계속하고, 다 받으면 여기서 이어서 AI 를 올린다 */
+    fun installLater() {
+        _state.update { it.copy(setup = it.setup.copy(later = true)) }
+        speakScreen()
+    }
+
+    private fun watchDownload() {
+        if (downloadJob?.isActive == true) return
+        downloadJob = viewModelScope.launch {
+            _state.update { it.copy(setup = it.setup.copy(phase = SetupPhase.DOWNLOADING, error = null)) }
+            var last: Pair<Long, Long>? = null // (시각 ms, 받은 바이트) — 남은 시간 어림용
+            var speed = 0.0
+            while (true) {
+                when (val p = installer.progress()) {
+                    is ModelInstaller.Progress.Running -> {
+                        val now = System.currentTimeMillis()
+                        last?.let { (t, b) -> if (now > t && p.done > b) speed = 0.8 * speed + 0.2 * ((p.done - b) * 1000.0 / (now - t)) }
+                        last = now to p.done
+                        val eta = if (speed > 0) ((p.total - p.done) / speed).toLong() else null
+                        _state.update { it.copy(setup = it.setup.copy(phase = SetupPhase.DOWNLOADING, done = p.done, total = p.total, etaSec = eta, waiting = p.waiting)) }
+                    }
+                    ModelInstaller.Progress.Finished -> {
+                        _state.update { it.copy(setup = it.setup.copy(phase = SetupPhase.VERIFYING, done = it.setup.total)) }
+                        if (installer.verifyAndInstall()) {
+                            loadModel(installer.modelFile)
+                            setupDone()
+                        } else {
+                            needModel("받은 파일이 온전하지 않아요. 다시 받아 주세요.")
+                        }
+                        return@launch
+                    }
+                    is ModelInstaller.Progress.Failed -> {
+                        installer.clear()
+                        return@launch needModel("받다가 멈췄어요. 연결을 확인하고 다시 받아 주세요.")
+                    }
+                    ModelInstaller.Progress.Gone -> {
+                        installer.clear()
+                        return@launch needModel()
+                    }
+                }
+                delay(500)
+            }
+        }
+    }
+
+    private fun setupDone() {
+        val wasVisible = !_state.value.setup.later
+        _state.update { it.copy(setup = it.setup.copy(phase = SetupPhase.DONE, later = false)) }
+        if (wasVisible && _state.value.screen == Screen.Home) say(Scripts.home())
+    }
+
+    private suspend fun loadModel(file: File) {
         try {
             val e = GemmaEngine(file, getApplication<Application>().cacheDir)
             val ms = e.load(BackendKind.CPU)
@@ -94,20 +174,39 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
     fun startListening() {
         val s = _state.value
         if (s.ai != AiStatus.READY || s.agentBusy) {
-            if (s.ai != AiStatus.READY) speaker.speak(Scripts.aiUnavailable())
+            if (s.ai != AiStatus.READY) say(Scripts.aiUnavailable())
             return
         }
         speaker.stop() // TTS 소리가 마이크로 들어가지 않게
-        _state.update { it.copy(screen = Screen.Listening, returnTo = s.effectiveScreen, heard = "", agentBusy = false, bubble = "") }
+        _state.update { it.copy(screen = Screen.Listening, returnTo = s.effectiveScreen, heard = "", lastHeard = "", heardTyped = false, typing = false, agentBusy = false, bubble = "") }
         listener.start()
     }
 
     /** 처음 화면 예시 문장: 그 글을 말한 것처럼 에이전트에 넘긴다(STT 를 거치지 않음). */
-    fun submitText(text: String) {
+    fun submitText(text: String) = submit(text, typed = false)
+
+    // ---- 글자로 쓰기: 말과 같은 길로 에이전트에 간다(대답도 읽는다) ----------------
+
+    fun openTyping() {
+        if (_state.value.agentBusy) return
+        speaker.stop()
+        _state.update { it.copy(typing = true) }
+    }
+
+    fun closeTyping() = _state.update { it.copy(typing = false) }
+
+    fun submitTyped(text: String) {
+        if (text.isBlank()) return // 빈 글은 보내지 않는다
+        submit(text.trim(), typed = true)
+    }
+
+    private fun submit(text: String, typed: Boolean) {
         val s = _state.value
         if (s.ai != AiStatus.READY || s.agentBusy) return
         speaker.stop()
-        _state.update { it.copy(screen = Screen.Listening, returnTo = s.effectiveScreen, heard = text, bubble = "") }
+        _state.update {
+            it.copy(screen = Screen.Listening, returnTo = s.effectiveScreen, heard = text, lastHeard = text, heardTyped = typed, typing = false, bubble = "")
+        }
         runAgent(text)
     }
 
@@ -134,7 +233,7 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
                 if (_state.value.agentBusy) return
                 Log.w(TAG, "stt error ${ls.code}")
                 go(_state.value.returnTo, speak = false)
-                speaker.speak(
+                say(
                     if (ls.code == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) Scripts.aiUnavailable() else Scripts.notHeard(),
                 )
             }
@@ -144,14 +243,14 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun runAgent(heard: String) {
         val a = agent ?: return
-        _state.update { it.copy(heard = heard, agentBusy = true, progress = "알아듣고 있어요") }
-        speaker.speak(Scripts.thinking())
+        _state.update { it.copy(heard = heard, lastHeard = heard, agentBusy = true, steps = listOf(Step("말씀을 알아듣고 있어요", "말씀을 알아들었어요"))) }
+        say(Scripts.thinking())
         agentJob = viewModelScope.launch {
             val before = _state.value
             val turn = try {
                 a.handle(
                     heard, before,
-                    onProgress = { p -> _state.update { it.copy(progress = p) } },
+                    onStep = { step -> _state.update { it.copy(steps = it.steps + step) } },
                     onCart = { c -> _state.update { it.copy(cart = c) } },
                 )
             } catch (e: CancellationException) {
@@ -170,7 +269,7 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
     private fun render(turn: AgentTurn, returnTo: Screen) {
         // 화면을 바꾸지 않은 결과는 말을 시작한 화면으로 돌아간다
         val st = turn.state.let { if (it.screen == Screen.Listening) it.copy(screen = returnTo) else it }
-            .copy(agentBusy = false, heard = "", progress = "", bubble = "", missingOption = null)
+            .copy(agentBusy = false, heard = "", steps = emptyList(), bubble = "", missingOption = null)
         when (turn) {
             is AgentTurn.Moved -> {
                 _state.value = st
@@ -179,11 +278,11 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
             }
             is AgentTurn.Said -> {
                 _state.value = st.copy(bubble = SpeechText.clean(turn.text))
-                speaker.speak(Scripts.say(turn.text))
+                say(Scripts.say(turn.text))
             }
             is AgentTurn.Failed -> {
                 _state.value = st
-                speaker.speak(
+                say(
                     when {
                         turn.reason == AgentTurn.Reason.OFFLINE -> Scripts.networkError()
                         st.cartProblem != null -> Scripts.orderBlocked(st.cart.firstOrNull { it.lineId == st.cartProblem })
@@ -261,7 +360,7 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = out.state.copy(agentBusy = false, bubble = "", missingOption = null, notes = notes)
             when {
                 out.ok -> if (out.state.screen != s.screen) speakScreen()
-                out.offline -> speaker.speak(Scripts.networkError())
+                out.offline -> say(Scripts.networkError())
                 // 옵션을 골라야 담을 수 있다: 상세 화면에서 그 옵션을 강조하고 읽어 준다
                 action is Action.CartAdd && out.choices.isNotEmpty() -> {
                     if (out.state.current?.id != action.productId) {
@@ -269,15 +368,21 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
                         _state.value = opened.state.copy(agentBusy = false, notes = notes)
                     }
                     _state.update { it.copy(missingOption = out.choices.keys.first()) }
-                    speaker.speak(Scripts.askOption(out.choices))
+                    say(Scripts.askOption(out.choices))
                 }
-                out.state.cartProblem != null -> speaker.speak(Scripts.orderBlocked(out.state.cart.firstOrNull { it.lineId == out.state.cartProblem }))
-                else -> speaker.speak(Scripts.agentFailed())
+                out.state.cartProblem != null -> say(Scripts.orderBlocked(out.state.cart.firstOrNull { it.lineId == out.state.cartProblem }))
+                else -> say(Scripts.agentFailed())
             }
         }
     }
 
     fun stopReading() = speaker.stop()
+
+    /** 읽고, 첫 문장을 대화 띠에 남긴다. 들리는 말과 보이는 말이 같게 한다 */
+    private fun say(lines: List<Utterance>) {
+        _state.update { it.copy(said = lines.firstOrNull()?.text.orEmpty()) }
+        speaker.speak(lines)
+    }
 
     fun openDevMenu() {
         speaker.stop()
@@ -299,13 +404,13 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
         val s = _state.value
         val p = s.current
         when (s.screen) {
-            Screen.Home -> speaker.speak(Scripts.home())
-            Screen.Results -> speaker.speak(Scripts.results(s.label, s.shown))
-            Screen.Detail -> p?.let { speaker.speak(Scripts.detail(it, s.selected)) }
-            Screen.Cart -> speaker.speak(Scripts.cart(s.cart))
-            Screen.Confirm -> speaker.speak(Scripts.confirm(s.cart))
-            Screen.Done -> speaker.speak(Scripts.done(s.orderIds.size))
-            Screen.History -> speaker.speak(Scripts.history(s.pastOrders))
+            Screen.Home -> say(Scripts.home())
+            Screen.Results -> say(Scripts.results(s.label, s.shown))
+            Screen.Detail -> p?.let { say(Scripts.detail(it, s.selected)) }
+            Screen.Cart -> say(Scripts.cart(s.cart))
+            Screen.Confirm -> say(Scripts.confirm(s.cart))
+            Screen.Done -> say(Scripts.done(s.orderIds.size))
+            Screen.History -> say(Scripts.history(s.pastOrders))
             Screen.Listening, Screen.DevLlm -> speaker.stop()
         }
     }
@@ -313,6 +418,7 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
     /** 시스템 뒤로 가기. 처음 화면에서는 false 를 돌려 앱이 닫히게 둔다. */
     fun back(): Boolean {
         val s = _state.value
+        if (s.typing) return true.also { closeTyping() } // 입력 칸부터 닫는다
         when (s.screen) {
             Screen.Home -> return false
             Screen.Listening -> cancelListening()
