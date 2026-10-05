@@ -148,130 +148,159 @@ class CategoryRefOut(BaseModel):
     sub: Named
 
 class UnitPrice(BaseModel):
-    value: int
-    per: str  # "1매", "100g", "1kg"
+    value: int = Field(description="단위당 가격(원)", examples=[1317])
+    per: str = Field(description="기준 단위. 셀 수 있는 것은 1단위당, g·ml 은 100g·100ml 당", examples=["1매", "100g", "1kg"])
 
 
 class PriceTier(BaseModel):
-    level: PriceTierLevel
-    label: str  # "싼 편" / "보통 가격" / "비싼 편"
-    percentile: int  # 같은 카테고리 안 가격 백분위. 0 = 가장 쌈
+    level: PriceTierLevel = Field(description="low 싼 편 · mid 보통 · high 비싼 편")
+    label: str = Field(description="읽기 좋은 이름", examples=["보통 가격"])
+    percentile: int = Field(description="같은 중분류 안 가격 백분위(0 = 가장 쌈, 100 = 가장 비쌈). 중분류 상품이 5개 미만이면 대분류 기준")
 
 
 class PricingOut(BaseModel):
-    price: int
-    originalPrice: int | None
-    discountRate: int
+    price: int = Field(description="판매가(원)")
+    originalPrice: int | None = Field(description="할인 전 가격(원). 할인이 없으면 null")
+    discountRate: int = Field(description="할인율(%). 서버 계산")
     unitPrice: UnitPrice
     priceTier: PriceTier
 
 
 class DeliveryOut(DeliverySeed):
-    arriveLabel: str
-    arriveSpoken: str
+    arriveLabel: str = Field(description="화면 표기 도착일", examples=["내일 10월 6일(화)"])
+    arriveSpoken: str = Field(description="읽어 줄 때 쓰는 말. \"{arriveSpoken} 도착해요\"", examples=["내일", "10월 8일 목요일에"])
 
 
 class StatsOut(StatsSeed):
-    rankInSub: int
-    rankInMid: int
-    rankInMain: int
-    rankOverall: int
-    badges: list[str]
+    rankInSub: int = Field(description="소분류 안 30일 판매 순위")
+    rankInMid: int = Field(description="중분류 안 30일 판매 순위")
+    rankInMain: int = Field(description="대분류 안 30일 판매 순위")
+    rankOverall: int = Field(description="전체 30일 판매 순위")
+    badges: list[str] = Field(description="베스트 · 할인 · 로켓배송 · 무료배송 · 재구매 많음 · 품절 임박")
 
 
 class OptionValueOut(BaseModel):
-    value: str
-    priceAdd: int
-    stock: StockStatus
+    value: str = Field(examples=["L"])
+    priceAdd: int = Field(description="이 값을 고르면 더하는 금액(원)")
+    stock: StockStatus = Field(description="값별 재고. 따로 없으면 상품 재고를 따른다")
 
 
 class OptionAxisOut(BaseModel):
-    name: str
+    name: str = Field(description="옵션 이름", examples=["사이즈"])
     values: list[OptionValueOut]
 
 
 class ProductOut(BaseModel):
+    """상품 전체 정보(view=full)."""
+
     productId: str
     productName: str
-    brand: str
+    brand: str = Field(description="가상 브랜드")
     category: CategoryRefOut
-    origin: str
-    audience: Audience
-    isGift: bool
+    origin: str = Field(description="제조국·원산지")
+    audience: Audience = Field(description="senior 어르신용 · general 일반 · kids 아이용")
+    isGift: bool = Field(description="선물용으로 알맞은가")
     pricing: PricingOut
     spec: Spec
     delivery: DeliveryOut
     stats: StatsOut
     content: Content
     stock: Stock
-    options: list[OptionAxisOut]
-    productImage: str
+    options: list[OptionAxisOut] = Field(description="옵션 축(0~2개). 비어 있으면 옵션 없는 상품")
+    productImage: str = Field(description="이미지 URL. 상품 사진이 없으면 대분류 아이콘(SVG)")
     source: str
 
 
 class OptionBrief(BaseModel):
-    name: str
-    values: list[str]  # 품절 값은 뺀다
+    name: str = Field(examples=["사이즈"])
+    values: list[str] = Field(description="지금 고를 수 있는 값(품절 값은 뺌)", examples=[["M", "L", "XL"]])
 
 
 class ProductCompact(BaseModel):
-    """검색 기본 응답. 온디바이스 모델의 입력 토큰을 줄이려고 판단에 필요한 것만 남겼다(한 건 약 400바이트)."""
+    """검색 기본 응답(view=compact). 온디바이스 모델의 입력 토큰을 줄이려고 판단에 필요한 것만 남겼다(한 건 약 400바이트)."""
 
-    id: str
-    name: str
-    brand: str
-    sub: str
-    price: int
-    priceSpoken: str
-    tier: str
-    discount: int
-    rating: float
-    reviews: int
-    rankInMid: int
-    badges: list[str]
-    arrive: str
-    stock: StockStatus
-    gift: bool
-    options: list[OptionBrief]
+    id: str = Field(description="상품 id", examples=["p03005"])
+    name: str = Field(description="상품명", examples=["무릎 전용 핫팩 파스 12매"])
+    brand: str = Field(description="가상 브랜드", examples=["온케어"])
+    sub: str = Field(description="소분류 이름", examples=["핫파스"])
+    price: int = Field(description="판매가(원)", examples=[15800])
+    priceSpoken: str = Field(description="읽는 가격. 모델은 이 말을 그대로 읽는다", examples=["만 오천팔백 원"])
+    tier: str = Field(description="가격대 등급(같은 중분류 안 비교)", examples=["보통 가격"])
+    discount: int = Field(description="할인율(%)", examples=[12])
+    rating: float = Field(description="평점(1~5)", examples=[4.7])
+    reviews: int = Field(description="리뷰 수", examples=[2210])
+    rankInMid: int = Field(description="중분류 안 30일 판매 순위", examples=[1])
+    badges: list[str] = Field(description="배지", examples=[["베스트", "할인", "로켓배송"]])
+    arrive: str = Field(description="읽는 도착일", examples=["내일"])
+    stock: StockStatus = Field(description="in_stock · low(품절 임박) · sold_out")
+    gift: bool = Field(description="선물용으로 알맞은가")
+    options: list[OptionBrief] = Field(description="옵션이 있으면 주문 때 모두 골라야 한다")
 
 
 class SubTreeOut(Named):
     productCount: int
-    target: int
+    target: int = Field(description="데이터 생성 목표 수")
 
 
 class MidTreeOut(Named):
     productCount: int
     target: int
-    priceRange: tuple[int, int]
+    priceRange: tuple[int, int] = Field(description="이 중분류의 가격대 가이드(원)")
     subs: list[SubTreeOut]
 
 
 class CategoryOut(Named):
-    iconUrl: str
+    iconUrl: str = Field(description="대분류 아이콘(SVG)")
     productCount: int
     target: int
     mids: list[MidTreeOut]
 
+
 class SearchOut(BaseModel):
-    query: str
-    total: int
-    products: list[ProductCompact] | list[ProductOut]
+    query: str = Field(description="받은 검색어")
+    total: int = Field(description="조건에 맞는 전체 개수(limit 와 무관)")
+    products: list[ProductCompact] | list[ProductOut] = Field(description="view=compact 면 ProductCompact, full 이면 ProductOut")
+
+
+class HealthOut(BaseModel):
+    ok: bool
+    version: str = Field(examples=["0.4.1"])
+    products: int = Field(description="적재된 상품 수", examples=[2974])
 
 
 class OrderIn(BaseModel):
-    userId: str = Field(min_length=1, max_length=40)
-    productId: str
-    quantity: int = Field(ge=1, le=9)
-    options: dict[str, str] = Field(default_factory=dict)  # {"사이즈": "L"}
+    model_config = ConfigDict(json_schema_extra={"examples": [
+        {"userId": "u001", "productId": "p07002", "quantity": 1, "options": {"사이즈": "L"}},
+        {"userId": "u001", "productId": "p01001", "quantity": 1},
+    ]})
+
+    userId: str = Field(min_length=1, max_length=40, description="사용자 id. 시연 사용자는 u001")
+    productId: str = Field(description="상품 id")
+    quantity: int = Field(ge=1, le=9, description="수량(1~9)")
+    options: dict[str, str] = Field(default_factory=dict, description="고른 옵션 {옵션 이름: 값}. 옵션 없는 상품이면 비운다")
 
 
 class OrderOut(BaseModel):
-    orderId: str
+    orderId: str = Field(description="목업 주문번호", examples=["M-20261005-5080"])
     userId: str
     productId: str
     productName: str
     quantity: int
-    options: dict[str, str]
-    totalPrice: int
-    orderedAt: str
+    options: dict[str, str] = Field(description="고른 옵션")
+    totalPrice: int = Field(description="합계(원) = (가격 + 옵션 추가 금액) × 수량 + 배송비")
+    orderedAt: str = Field(description="주문 시각(KST, ISO 8601)")
+
+
+class OrderErrorDetail(BaseModel):
+    """주문 실패(422 옵션·409 품절·404) 본문의 detail. 앱 에이전트는 choices 로 되묻는다."""
+
+    message: str
+    missing: list[str] = Field(default_factory=list, description="고르지 않은 옵션 이름")
+    invalid: dict[str, str] = Field(default_factory=dict, description="없는 값을 고른 옵션 {이름: 보낸 값}")
+    unknownOptions: list[str] = Field(default_factory=list, description="이 상품에 없는 옵션 이름")
+    soldOut: list[str] = Field(default_factory=list, description="품절인 옵션 값")
+    choices: dict[str, list[str]] = Field(default_factory=dict, description="지금 고를 수 있는 값 {옵션 이름: [값…]}")
+
+
+class OrderErrorOut(BaseModel):
+    detail: OrderErrorDetail
