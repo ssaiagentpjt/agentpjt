@@ -11,6 +11,8 @@
 
 import logging
 import os
+from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -22,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from . import docs
 from .models import BatchOrderIn, BatchOrderOut, CategoryOut, HealthOut, OrderIn, OrderOut, ProductCompact, ProductOut, SearchOut
 from .search import Audience, Sort, Tier
-from .store import DEFAULT_DATA_DIR, STATIC_DIR, OrderError, Store
+from .store import DEFAULT_DATA_DIR, STATIC_DIR, OrderError, Store, now_kst
 
 VERSION = "0.5.0"
 View = Literal["compact", "full"]
@@ -40,8 +42,9 @@ def create_app(
     db_path: str = "shop.db",
     api_key: str | None = None,
     public_base_url: str | None = None,
+    clock: Callable[[], datetime] = now_kst,
 ) -> FastAPI:
-    store = Store(data_dir, db_path)
+    store = Store(data_dir, db_path, clock)
     app = FastAPI(
         title="손주야 목업 상품 API",
         version=VERSION,

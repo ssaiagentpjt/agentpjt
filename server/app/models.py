@@ -318,6 +318,7 @@ class BatchOrderOut(BaseModel):
 class OrderErrorDetail(BaseModel):
     """주문 실패(422 옵션·409 품절·404) 본문의 detail. 앱 에이전트는 choices 로 되묻는다."""
 
+    code: str = Field(description="오류 종류. PRODUCT_NOT_FOUND · MISSING_OPTION · OUT_OF_STOCK 등. 앱은 이걸로 갈래를 나눈다")
     message: str
     missing: list[str] = Field(default_factory=list, description="고르지 않은 옵션 이름")
     invalid: dict[str, str] = Field(default_factory=dict, description="없는 값을 고른 옵션 {이름: 보낸 값}")

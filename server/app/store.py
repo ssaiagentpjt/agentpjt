@@ -3,6 +3,8 @@
 import json
 import random
 import sqlite3
+import threading
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -50,19 +52,31 @@ _PRODUCT_SELECT = """
 
 
 class OrderError(Exception):
-    """주문을 받을 수 없을 때. detail 은 앱 에이전트가 되묻는 데 쓸 수 있게 고를 수 있는 값까지 담는다."""
+    """주문을 받을 수 없을 때. detail 은 앱 에이전트가 되묻는 데 쓸 수 있게 고를 수 있는 값까지 담는다.
 
-    def __init__(self, status: int, detail: dict):
+    detail["code"] 는 앱이 문구를 보지 않고 갈래를 나누는 데 쓴다(MISSING_OPTION 이면 되묻기, OUT_OF_STOCK 이면 다른 상품 권하기).
+    """
+
+    def __init__(self, status: int, code: str, detail: dict):
         super().__init__(detail.get("message", ""))
         self.status = status
-        self.detail = detail
+        self.detail = {"code": code, **detail}
+
+
+def now_kst() -> datetime:
+    return datetime.now(KST)
 
 
 class Store:
-    def __init__(self, data_dir: Path, db_path: str):
+    def __init__(self, data_dir: Path, db_path: str, clock: Callable[[], datetime] = now_kst):
         # FastAPI 는 동기 엔드포인트를 스레드 풀에서 돌리므로 같은 연결을 여러 스레드가 쓴다
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        # 주문 쓰기(검사 → 기록 → 커밋)는 한 번에 하나씩 한다. 연결 하나를 나눠 쓰므로 잠그지 않으면 트랜잭션이 섞이고,
+        # 같은 요청이 동시에 두 번 와도 둘 다 검사를 통과해 버린다
+        self.order_lock = threading.Lock()
+        # 토큰 만료를 테스트에서 시간을 옮겨 가며 검사하려고 시계를 받는다
+        self.clock = clock
         db.rebuild(self.conn, data_dir)
         for o in db.load_seed_orders(data_dir):
             row = self.conn.execute("select price, shipping_fee from products where id = ?", (o.productId,)).fetchone()
@@ -223,9 +237,9 @@ class Store:
         """주문 한 줄을 검사하고 (상품명, 합계)를 돌려준다. 받을 수 없으면 OrderError."""
         row = self.conn.execute("select name, price, shipping_fee, stock_status from products where id = ?", (product_id,)).fetchone()
         if row is None:
-            raise OrderError(404, {"message": f"없는 상품: {product_id}"})
+            raise OrderError(404, "PRODUCT_NOT_FOUND", {"message": f"없는 상품: {product_id}"})
         if row["stock_status"] == "sold_out":
-            raise OrderError(409, {"message": "품절된 상품이다"})
+            raise OrderError(409, "OUT_OF_STOCK", {"message": "품절된 상품이다"})
         axes = self._options([product_id], "?", {product_id: row}).get(product_id, [])
 
         # 축이 빠졌거나 없는 값이면 422. 앱 에이전트가 choices 로 되묻는다("사이즈는 M, L, XL 이 있어요")
@@ -233,7 +247,7 @@ class Store:
         missing = [a for a in axes if a.name not in chosen]
         invalid = [a for a in axes if a.name in chosen and chosen[a.name] not in {v.value for v in a.values}]
         if unknown_axes or missing or invalid:
-            raise OrderError(422, {
+            raise OrderError(422, "MISSING_OPTION", {
                 "message": "옵션을 골라야 한다",
                 "unknownOptions": unknown_axes,
                 "missing": [a.name for a in missing],
@@ -243,7 +257,7 @@ class Store:
         picked = [next(v for v in a.values if v.value == chosen[a.name]) for a in axes]
         sold_out = [f"{a.name} {v.value}" for a, v in zip(axes, picked, strict=True) if v.stock == "sold_out"]
         if sold_out:
-            raise OrderError(409, {
+            raise OrderError(409, "OUT_OF_STOCK", {
                 "message": "고른 옵션이 품절이다",
                 "soldOut": sold_out,
                 "choices": {a.name: [v.value for v in a.values if v.stock != "sold_out"] for a in axes},
@@ -267,30 +281,32 @@ class Store:
 
     def place_order(self, user_id: str, product_id: str, quantity: int, chosen: dict[str, str]) -> tuple[str, str, int, str]:
         """(주문번호, 상품명, 합계, 주문 시각). 받을 수 없으면 OrderError."""
-        name, total = self._check_line(product_id, quantity, chosen)
-        now = datetime.now(KST)
-        order_id = self._insert_order(user_id, product_id, quantity, total, chosen, now)
-        self.conn.commit()
+        with self.order_lock:
+            name, total = self._check_line(product_id, quantity, chosen)
+            now = self.clock()
+            order_id = self._insert_order(user_id, product_id, quantity, total, chosen, now)
+            self.conn.commit()
         return order_id, name, total, now.isoformat(timespec="seconds")
 
     def place_batch(self, user_id: str, items: list[tuple[str, int, dict[str, str]]]) -> list[tuple[str, str, int, str]]:
         """여러 줄을 한꺼번에 주문한다(장바구니 결제). 모든 줄을 먼저 검사하고, 하나라도 안 되면 아무것도 넣지 않는다.
         실패한 줄은 OrderError detail 의 index·productId 로 알린다. 성공하면 줄마다 (주문번호, 상품명, 합계, 주문 시각)."""
-        checked = []
-        for i, (product_id, quantity, chosen) in enumerate(items):
+        with self.order_lock:
+            checked = []
+            for i, (product_id, quantity, chosen) in enumerate(items):
+                try:
+                    checked.append(self._check_line(product_id, quantity, chosen))
+                except OrderError as e:
+                    raise OrderError(e.status, e.detail["code"], {**e.detail, "index": i, "productId": product_id}) from e
+            now = self.clock()
+            at = now.isoformat(timespec="seconds")
             try:
-                checked.append(self._check_line(product_id, quantity, chosen))
-            except OrderError as e:
-                raise OrderError(e.status, {**e.detail, "index": i, "productId": product_id}) from e
-        now = datetime.now(KST)
-        at = now.isoformat(timespec="seconds")
-        try:
-            out = [(self._insert_order(user_id, pid, qty, total, chosen, now), name, total, at)
-                   for (pid, qty, chosen), (name, total) in zip(items, checked, strict=True)]
-            self.conn.commit()
-        except Exception:
-            self.conn.rollback()  # 일부만 들어가는 일이 없게 한다
-            raise
+                out = [(self._insert_order(user_id, pid, qty, total, chosen, now), name, total, at)
+                       for (pid, qty, chosen), (name, total) in zip(items, checked, strict=True)]
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()  # 일부만 들어가는 일이 없게 한다
+                raise
         return out
 
     def orders_of(self, user_id: str, limit: int) -> list[dict]:
