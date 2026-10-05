@@ -211,6 +211,21 @@ def check(data_dir: Path, only: set[str] | None, strict: bool = False) -> tuple[
         print(f"대상 senior {aud['senior']} · general {aud['general']} · kids {aud['kids']}"
               f" · 어르신 가중 대분류 비중 {senior_main / len(products):.0%}")
 
+    # 상황 태그(needs): 어휘 안의 이름만, 상품당 3개까지, 있는 상품에만
+    vocab, needs = db.load_needs(data_dir)
+    known = {v["name"] for v in vocab}
+    ids = {p.productId for p in products}
+    for pid, names in needs.items():
+        if pid not in ids and not only:
+            errors.append(f"needs: 없는 상품 {pid}")
+        if bad := [n for n in names if n not in known]:
+            errors.append(f"needs: {pid} 의 어휘 밖 이름 {bad}")
+        if len(names) > 3 or len(set(names)) != len(names):
+            errors.append(f"needs: {pid} 는 중복 없이 3개까지")
+    if vocab and products:
+        covered = sum(1 for p in products if needs.get(p.productId))
+        print(f"상황 태그: 어휘 {len(vocab)}개 · 붙은 상품 {covered}/{len(products)}")
+
     if not only and not errors:
         conn = sqlite3.connect(":memory:")
         db.rebuild(conn, data_dir)

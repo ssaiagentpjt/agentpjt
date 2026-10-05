@@ -160,3 +160,13 @@ def test_batch_order_is_all_or_nothing(client):
     # 앞 줄(p03003)도 주문되지 않았다
     assert len(client.get("/users/u001/orders", params={"limit": 50}, headers=KEY).json()) == before
     assert client.post("/orders/batch", headers=KEY, json={"userId": "u001", "items": []}).status_code == 422
+
+
+def test_needs_are_listed_searched_and_filterable(client):
+    needs = {n["name"]: n for n in client.get("/needs", headers=KEY).json()}
+    assert needs["끼니"]["productCount"] == 1 and needs["관절·근육"]["productCount"] == 1 and needs["추위"]["productCount"] == 0
+    # 상황 태그는 태그처럼 검색된다
+    assert [p["id"] for p in client.get("/products/search", params={"q": "끼니"}, headers=KEY).json()["products"]] == ["p01001"]
+    # need 로 거른다(검색어 없이도)
+    assert [p["id"] for p in client.get("/products/search", params={"need": "관절·근육"}, headers=KEY).json()["products"]] == ["p03005"]
+    assert client.get("/products/search", params={"need": "없는 태그"}, headers=KEY).status_code == 400

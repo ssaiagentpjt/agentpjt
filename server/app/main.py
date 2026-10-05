@@ -31,6 +31,7 @@ from .models import (
     ConfirmIn,
     ConfirmOut,
     HealthOut,
+    NeedOut,
     OrderIn,
     OrderOut,
     PreparedItemOut,
@@ -115,6 +116,7 @@ def create_app(
             description="가격대 등급. 같은 중분류 안 가격 백분위로 나눕니다: `low` 싼 편(하위 1/3) · `mid` 보통 · `high` 비싼 편")] = None,
         audience: Annotated[Audience | None, Query(description="대상. `senior` 어르신용 · `general` 일반 · `kids` 아이용")] = None,
         gift: Annotated[bool | None, Query(description="`true` 면 선물용으로 알맞은 상품만")] = None,
+        need: Annotated[str | None, Query(description="상황 태그(`/needs`). 그 태그가 붙은 상품만", examples=["끼니"])] = None,
         includeSoldOut: Annotated[bool, Query(description="품절 상품도 포함할지. 기본은 빼고 찾습니다.")] = False,
         sort: Annotated[Sort, Query(description=docs.SORT_HELP)] = "relevance",
         # 모델이 고르는 것은 최대 3개라 기본 5개. compact 가 기본인 것도 온디바이스 모델의 입력 토큰을 줄이려는 것
@@ -130,12 +132,20 @@ def create_app(
         """
         if main and not store.main_exists(main):
             raise HTTPException(status_code=400, detail=f"없는 대분류: {main}")
+        if need and not store.need_exists(need):
+            raise HTTPException(status_code=400, detail=f"없는 상황 태그: {need}")
         total, found = store.search(
             base(request), q=q, main=main, mid=mid, sub=sub, min_price=minPrice, max_price=maxPrice,
-            price_tier=priceTier, audience=audience, gift=gift, include_sold_out=includeSoldOut, sort=sort, limit=limit,
+            price_tier=priceTier, audience=audience, gift=gift, need=need, include_sold_out=includeSoldOut, sort=sort, limit=limit,
             compact=view == "compact",
         )
         return SearchOut(query=q, total=total, products=found)
+
+    @app.get("/needs", tags=["분류"], summary="상황 태그 목록", dependencies=auth, responses=docs.UNAUTHORIZED)
+    def needs() -> list[NeedOut]:
+        """어르신이 '무엇이 필요한지'로 말할 때(저녁거리, 추울 때) 찾는 고정 어휘입니다. 상품마다 0~3개가 붙어 있고,
+        검색어로 쓰면 태그처럼 맞고 `need` 로 거를 수 있습니다."""
+        return [NeedOut(**n) for n in store.needs()]
 
     @app.get("/products/{product_id}", tags=["상품"], summary="상품 상세", dependencies=auth,
              responses={**docs.UNAUTHORIZED, **docs.PRODUCT_NOT_FOUND})

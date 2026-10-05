@@ -171,6 +171,16 @@ class Store:
             tags.setdefault(r["product_id"], []).append(r["tag"])
         return [self._to_out(rows[i], tags.get(i, []), options.get(i, []), base) for i in ids if i in rows]
 
+    def needs(self) -> list[dict]:
+        """상황 태그 어휘와 붙은 상품 수(어휘 순서)."""
+        rows = self.conn.execute(
+            "select v.name, v.description, count(n.product_id) as c from needs_vocab v"
+            " left join product_needs n on n.need = v.name group by v.name order by v.ord").fetchall()
+        return [{"name": r[0], "description": r[1], "productCount": r[2]} for r in rows]
+
+    def need_exists(self, name: str) -> bool:
+        return self.conn.execute("select 1 from needs_vocab where name = ?", (name,)).fetchone() is not None
+
     def search(self, base: str, compact: bool = True, **kwargs) -> tuple[int, list]:
         total, ids = search(self.conn, **kwargs)
         return total, self.products(ids, base, compact)

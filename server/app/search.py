@@ -61,6 +61,7 @@ def search(
     price_tier: Tier | None = None,
     audience: Audience | None = None,
     gift: bool | None = None,
+    need: str | None = None,
     include_sold_out: bool = False,
     sort: Sort = "relevance",
     limit: int = 5,
@@ -83,6 +84,9 @@ def search(
     if gift is not None:
         where.append("p.is_gift = :gift")
         params["gift"] = int(gift)
+    if need:
+        where.append("exists (select 1 from product_needs n where n.product_id = p.id and n.need = :need)")
+        params["need"] = need
     if min_price is not None:
         where.append("p.price >= :min_price")
         params["min_price"] = min_price

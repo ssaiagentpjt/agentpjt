@@ -263,6 +263,12 @@ class SearchOut(BaseModel):
     products: list[ProductCompact] | list[ProductOut] = Field(description="view=compact 면 ProductCompact, full 이면 ProductOut")
 
 
+class NeedOut(BaseModel):
+    name: str = Field(description="상황 태그 이름. 검색 need 에 그대로 쓴다", examples=["끼니"])
+    description: str = Field(description="어떤 상품에 붙는지")
+    productCount: int = Field(description="이 태그가 붙은 상품 수")
+
+
 class HealthOut(BaseModel):
     ok: bool
     version: str = Field(examples=["0.5.0"])

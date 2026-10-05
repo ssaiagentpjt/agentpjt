@@ -18,6 +18,8 @@ from .metrics import compute
 from .models import MainSeed, ProductSeed, SeedOrder
 
 PRODUCT_SCHEMA = """
+drop table if exists product_needs;
+drop table if exists needs_vocab;
 drop table if exists product_search;
 drop table if exists product_options;
 drop table if exists product_metrics;
@@ -75,6 +77,9 @@ create table product_search (
   product_id text primary key references products(id),
   name_l text not null, tags_l text not null, sub_l text not null, mid_l text not null, main_l text not null,
   brand_l text not null, opts_l text not null);
+-- 상황 태그(needs): 어르신이 '무엇이 필요한지'로 말할 때 찾는 고정 어휘(data/needs_vocab.json)와 상품별 0~3개(data/needs/*.json)
+create table needs_vocab (name text primary key, description text not null, ord integer not null);
+create table product_needs (product_id text not null references products(id), need text not null references needs_vocab(name));
 """
 
 ORDER_SCHEMA = """
@@ -165,6 +170,16 @@ def check_references(mains: list[MainSeed], files: dict[str, list[ProductSeed]])
     return errors
 
 
+def load_needs(data_dir: Path) -> tuple[list[dict], dict[str, list[str]]]:
+    """(어휘 [{name, desc}], 상품 id → 상황 태그). 파일이 없으면 비어 있다(상황 태그 없이 동작)."""
+    vocab_file = data_dir / "needs_vocab.json"
+    vocab = json.loads(vocab_file.read_text(encoding="utf-8"))["needs"] if vocab_file.exists() else []
+    mapping: dict[str, list[str]] = {}
+    for f in sorted((data_dir / "needs").glob("*.json")) if (data_dir / "needs").exists() else []:
+        mapping.update(json.loads(f.read_text(encoding="utf-8")))
+    return vocab, mapping
+
+
 def rebuild(conn: sqlite3.Connection, data_dir: Path) -> None:
     """상품 쪽 테이블을 시드로 다시 만들고 계산 지표를 채운다."""
     mains = load_categories(data_dir)
@@ -173,9 +188,13 @@ def rebuild(conn: sqlite3.Connection, data_dir: Path) -> None:
         raise ValueError("시드 참조 오류:\n" + "\n".join(errors))
     products = [p for items in files.values() for p in items]
 
+    vocab, needs = load_needs(data_dir)
+    known_needs = {v["name"] for v in vocab}
+
     conn.executescript(PRODUCT_SCHEMA)
     conn.executescript(ORDER_SCHEMA)
     migrate_orders(conn)
+    conn.executemany("insert into needs_vocab values (?, ?, ?)", [(v["name"], v["desc"], i) for i, v in enumerate(vocab)])
     names = {}  # (main, mid, sub) -> (대, 중, 소분류 이름)
     for mi, m in enumerate(mains):
         conn.execute("insert into main_categories values (?, ?, ?, ?, ?, ?)",
@@ -202,6 +221,9 @@ def rebuild(conn: sqlite3.Connection, data_dir: Path) -> None:
              p.productImage, p.source),
         )
         conn.executemany("insert into product_tags values (?, ?)", [(p.productId, t) for t in p.content.tags])
+        # 어휘 밖 이름은 적재하지 않는다(validate 가 오류로 알린다). 시작이 깨지지 않게 한다
+        p_needs = [n for n in needs.get(p.productId, []) if n in known_needs][:3]
+        conn.executemany("insert into product_needs values (?, ?)", [(p.productId, n) for n in p_needs])
         s = p.stats
         conn.execute("insert into product_stats values (?, ?, ?, ?, ?, ?)",
                      (p.productId, s.salesCount30d, s.salesCountTotal, s.rating, s.reviewCount, s.repurchaseRate))
@@ -213,7 +235,8 @@ def rebuild(conn: sqlite3.Connection, data_dir: Path) -> None:
         main_n, mid_n, sub_n = names[(c.main, c.mid, c.sub)]
         conn.execute(
             "insert into product_search values (?, ?, ?, ?, ?, ?, ?, ?)",
-            (p.productId, p.productName.lower(), "|".join(t.lower() for t in p.content.tags),
+            # 상황 태그도 태그처럼 검색된다("끼니" 로 찾으면 끼니가 붙은 상품)
+            (p.productId, p.productName.lower(), "|".join(t.lower() for t in [*p.content.tags, *p_needs]),
              sub_n.lower(), mid_n.lower(), main_n.lower(), p.brand.lower(),
              "|".join(v.value.lower() for ax in p.options for v in ax.values)),
         )
