@@ -65,11 +65,12 @@ def test_search_defaults_to_small_compact_results(client):
         "id": "p03005", "name": "무릎 전용 핫팩 파스 12매", "brand": "온케어", "sub": "핫파스",
         "price": 15800, "priceSpoken": "만 오천팔백 원", "tier": p["tier"], "discount": 12,
         "rating": 4.7, "reviews": 2210, "rankInMid": 1, "badges": ["베스트", "할인", "로켓배송"],
-        "arrive": "내일", "stock": "in_stock", "gift": False, "options": [],
+        "arrive": "내일", "stock": "in_stock", "gift": False,
+        "image": "https://shop.example/static/icons/medical.svg", "options": [],
     }
     # 온디바이스 모델에 넘기는 크기: 5건 합쳐 2.5KB 이하
     import json
-    assert len(json.dumps(body["products"], ensure_ascii=False).encode()) <= 2500
+    assert len(json.dumps(body["products"], ensure_ascii=False).encode()) <= 2800  # image URL 포함
 
 
 def test_product_view_compact(client):

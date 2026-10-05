@@ -234,6 +234,7 @@ class ProductCompact(BaseModel):
     arrive: str = Field(description="읽는 도착일", examples=["내일"])
     stock: StockStatus = Field(description="in_stock · low(품절 임박) · sold_out")
     gift: bool = Field(description="선물용으로 알맞은가")
+    image: str = Field(description="이미지 URL. 상품 사진이 없으면 대분류 아이콘(SVG)")
     options: list[OptionBrief] = Field(description="옵션이 있으면 주문 때 모두 골라야 한다")
 
 

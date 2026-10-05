@@ -117,7 +117,7 @@ class Store:
         rows = {r["id"]: r for r in self.conn.execute(f"{_PRODUCT_SELECT} where p.id in ({marks})", ids)}
         options = self._options(ids, marks, rows)
         if compact:
-            return [self._to_compact(rows[i], options.get(i, [])) for i in ids if i in rows]
+            return [self._to_compact(rows[i], options.get(i, []), base) for i in ids if i in rows]
         tags: dict[str, list[str]] = {}
         for r in self.conn.execute(f"select product_id, tag from product_tags where product_id in ({marks}) order by rowid", ids):
             tags.setdefault(r["product_id"], []).append(r["tag"])
@@ -138,7 +138,14 @@ class Store:
                 OptionValueOut(value=r["value"], priceAdd=r["price_add"], stock=stock))
         return {pid: [OptionAxisOut(name=a, values=v) for a, v in axes.items()] for pid, axes in out.items()}
 
-    def _to_compact(self, r: sqlite3.Row, options: list[OptionAxisOut]) -> ProductCompact:
+    def _image(self, r: sqlite3.Row, base: str) -> str:
+        if r["image"]:
+            return r["image"] if r["image"].startswith("http") else base + r["image"]
+        if (STATIC_DIR / "products" / f"{r['id']}.webp").exists():
+            return f"{base}/static/products/{r['id']}.webp"
+        return f"{base}/static/icons/{r['main_id']}.svg"  # 상품 사진이 생기기 전까지 대분류 그림
+
+    def _to_compact(self, r: sqlite3.Row, options: list[OptionAxisOut], base: str) -> ProductCompact:
         _, spoken = arrive(today_kst(), r["delivery_days"])
         return ProductCompact(
             id=r["id"],
@@ -156,17 +163,13 @@ class Store:
             arrive=spoken,
             stock=r["stock_status"],
             gift=bool(r["is_gift"]),
+            image=self._image(r, base),
             options=[OptionBrief(name=a.name, values=[v.value for v in a.values if v.stock != "sold_out"]) for a in options],
         )
 
     def _to_out(self, r: sqlite3.Row, tags: list[str], options: list[OptionAxisOut], base: str) -> ProductOut:
         label, spoken = arrive(today_kst(), r["delivery_days"])
-        if r["image"]:
-            image = r["image"] if r["image"].startswith("http") else base + r["image"]
-        elif (STATIC_DIR / "products" / f"{r['id']}.webp").exists():
-            image = f"{base}/static/products/{r['id']}.webp"
-        else:
-            image = f"{base}/static/icons/{r['main_id']}.svg"  # 상품 사진이 생기기 전까지 카테고리 그림
+        image = self._image(r, base)
         return ProductOut(
             productId=r["id"],
             productName=r["name"],
