@@ -4,6 +4,7 @@ import com.agentpjt.shop.FakeShopApi
 import com.agentpjt.shop.TestData
 import com.agentpjt.shop.api.ApiResult
 import com.agentpjt.shop.api.SearchDto
+import com.agentpjt.shop.shop.KnownProduct
 import com.agentpjt.shop.shop.Screen
 import com.agentpjt.shop.shop.ShopState
 import kotlinx.coroutines.test.runTest
@@ -45,7 +46,7 @@ class AgentLoopTest {
     fun observation_feedsResultBack_andSchemaIsRecomputed() = runTest {
         val d = FakeDecider("""{"action":"search","query":"x"}""", """{"action":"show","ids":["p02"],"label":"찾은 것"}""")
         val progress = mutableListOf<String>()
-        val turn = loop(d).handle("아무 말", ShopState()) { progress += it }
+        val turn = loop(d).handle("아무 말", ShopState(), onProgress = { progress += it })
 
         assertTrue(turn is AgentTurn.Moved)
         assertEquals(Screen.Results, turn.state.screen)
@@ -86,9 +87,28 @@ class AgentLoopTest {
     }
 
     @Test
-    fun orderWithMissingOption_needsOption() = runTest {
-        val s = ToolExecutor(api).execute(Action.Open("p07002"), ShopState()).state.copy(screen = Screen.Listening, returnTo = Screen.Detail)
-        val turn = loop(FakeDecider("""{"action":"order"}""")).handle("이걸로 살게", s)
-        assertEquals(listOf("M", "L", "XL"), (turn as AgentTurn.NeedOption).choices["사이즈"])
+    fun cartEdits_chainInOneTurn_andCartIsReportedLive() = runTest {
+        val d = FakeDecider(
+            """{"action":"cart_add","productId":"p07002"}""", // 옵션이 빠졌다 → 결과로 고를 수 있는 값이 돌아간다
+            """{"action":"cart_add","productId":"p07002","options":{"사이즈":"L"}}""",
+            """{"action":"checkout"}""",
+        )
+        val carts = mutableListOf<Int>()
+        val s = ShopState(known = listOf(KnownProduct("p07002", "무릎 보호대")))
+        val turn = loop(d).handle("보호대 엘로 담고 주문해 줘", s, onCart = { carts += it.size })
+
+        assertTrue(d.messages[1], d.messages[1].contains("사이즈를 골라야 담을 수 있다. 고를 수 있는 값: M, L, XL"))
+        assertTrue(turn is AgentTurn.Moved)
+        assertEquals(Screen.Confirm, turn.state.screen)
+        assertEquals(listOf(1), carts)
+        assertTrue("place" !in d.schemas[2].actions()) // 확인 단계 전에는 결제가 없다
+    }
+
+    @Test
+    fun notes_arePrependedOnce() = runTest {
+        val d = FakeDecider("""{"action":"ask","question":"뭘 드릴까요?"}""")
+        val turn = loop(d).handle("음", ShopState(notes = listOf("앞의 요청은 어르신이 중단했다.")))
+        assertTrue(d.messages[0], d.messages[0].startsWith("(앱) 앞의 요청은 어르신이 중단했다.\n"))
+        assertTrue(turn.state.notes.isEmpty())
     }
 }

@@ -49,7 +49,9 @@ import androidx.compose.ui.unit.sp
 import com.agentpjt.shop.shop.AiStatus
 import com.agentpjt.shop.shop.ITEM_PREFIX
 import com.agentpjt.shop.shop.DEMO_USER_NAME
+import com.agentpjt.shop.shop.PastOrder
 import com.agentpjt.shop.shop.ProductSummary
+import com.agentpjt.shop.shop.total
 import com.agentpjt.shop.shop.ShopState
 import com.agentpjt.shop.shop.formatWon
 import com.agentpjt.shop.shop.readWon
@@ -80,7 +82,7 @@ private fun Title(text: String, modifier: Modifier = Modifier) {
 // 1. 처음 화면 -------------------------------------------------------------
 
 @Composable
-fun HomeScreen(s: ShopState, onMic: () -> Unit, onExample: (String) -> Unit, onDevMenu: () -> Unit) {
+fun HomeScreen(s: ShopState, onMic: () -> Unit, onExample: (String) -> Unit, onDevMenu: () -> Unit, onCart: () -> Unit, onHistory: () -> Unit) {
     val c = ShopTheme.colors
     Page {
         AiChip(s.ai)
@@ -101,6 +103,10 @@ fun HomeScreen(s: ShopState, onMic: () -> Unit, onExample: (String) -> Unit, onD
         Text("이렇게 말해 보세요", fontSize = 16.sp, color = c.inkSoft)
         // 누르면 그 문장을 말한 것처럼 에이전트에 넘긴다. 말이 서툰 분과 시연을 위한 길.
         EXAMPLES.forEach { ExampleSay(it, enabled = s.ai == AiStatus.READY) { onExample(it) } }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            BigButton(if (s.cart.isEmpty()) "장바구니" else "장바구니 ${s.cart.size}", onCart, Modifier.weight(1f), primary = false)
+            BigButton("주문 내역", onHistory, Modifier.weight(1f), primary = false)
+        }
     }
 }
 
@@ -264,14 +270,14 @@ fun DetailScreen(
     s: ShopState,
     onQty: (Int) -> Unit,
     onOption: (String, String) -> Unit,
-    onOrder: () -> Unit,
+    onAdd: () -> Unit,
     onOthers: () -> Unit,
     onMic: () -> Unit,
 ) {
     val c = ShopTheme.colors
     val p = s.current ?: return
     Page(bottom = {
-        BigButton(if (p.soldOut) "품절이에요" else "주문하기", onOrder, enabled = !p.soldOut && !s.agentBusy)
+        BigButton(if (p.soldOut) "품절이에요" else "장바구니에 담기", onAdd, enabled = !p.soldOut && !s.agentBusy)
         SpeakButton(onMic, s.ai == AiStatus.READY && !s.agentBusy)
         if (s.shown.isNotEmpty()) BigButton("다른 상품 보기", onOthers, primary = false)
     }) {
@@ -331,13 +337,84 @@ private fun Fact(label: String, value: String) {
     }
 }
 
+// 장바구니 -----------------------------------------------------------------
+
+@Composable
+fun CartScreen(s: ShopState, onQty: (String, Int) -> Unit, onRemove: (String) -> Unit, onCheckout: () -> Unit, onMic: () -> Unit) {
+    val c = ShopTheme.colors
+    Page(bottom = {
+        if (s.cart.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("합계", fontSize = 20.sp, fontWeight = FontWeight.Black, color = c.ink)
+                Text(formatWon(s.cart.total()), fontSize = 20.sp, fontWeight = FontWeight.Black, color = c.ink)
+            }
+            BigButton("주문하기", onCheckout, enabled = !s.agentBusy)
+        }
+        SpeakButton(onMic, s.ai == AiStatus.READY && !s.agentBusy)
+    }) {
+        if (s.bubble.isNotEmpty()) ReplyBubble(s.bubble)
+        Title(if (s.cart.isEmpty()) "장바구니가 비어 있어요" else "장바구니 · ${s.cart.size}가지")
+        s.cart.forEachIndexed { i, l ->
+            val problem = s.cartProblem == l.lineId
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                    .border(2.dp, if (problem) c.speakInk else c.line, RoundedCornerShape(16.dp))
+                    .background(if (problem) c.speak.copy(alpha = 0.25f) else c.surface).padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    NumberBadge(i + 1)
+                    Column(Modifier.weight(1f)) {
+                        Text(l.name, style = MaterialTheme.typography.titleMedium, color = c.ink)
+                        if (l.options.isNotEmpty()) Text(l.options.values.joinToString(" "), fontSize = 16.sp, color = c.inkSoft)
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OptionChip("−", selected = false, enabled = !s.agentBusy && l.qty > 1, soldOut = false) { onQty(l.lineId, -1) }
+                        Text("${l.qty}", fontSize = 22.sp, fontWeight = FontWeight.Black, color = c.ink)
+                        OptionChip("+", selected = false, enabled = !s.agentBusy && l.qty < 9, soldOut = false) { onQty(l.lineId, 1) }
+                    }
+                    Text(formatWon(l.total), fontSize = 20.sp, fontWeight = FontWeight.Black, color = c.ink)
+                }
+                OptionChip("빼기", selected = false, enabled = !s.agentBusy, soldOut = false) { onRemove(l.lineId) }
+            }
+        }
+    }
+}
+
+// 주문 내역 ----------------------------------------------------------------
+
+@Composable
+fun HistoryScreen(s: ShopState, onReorder: (PastOrder) -> Unit, onMic: () -> Unit) {
+    val c = ShopTheme.colors
+    Page(bottom = { SpeakButton(onMic, s.ai == AiStatus.READY && !s.agentBusy) }) {
+        if (s.bubble.isNotEmpty()) ReplyBubble(s.bubble)
+        Title(if (s.pastOrders.isEmpty()) "주문하신 것이 없어요" else "주문 내역")
+        s.pastOrders.forEach { o ->
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).border(2.dp, c.line, RoundedCornerShape(16.dp)).padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(o.date, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = c.inkSoft)
+                Text(o.name, style = MaterialTheme.typography.titleMedium, color = c.ink)
+                Text("${o.qty}개" + if (o.options.isEmpty()) "" else " · " + o.options.values.joinToString(" "), fontSize = 16.sp, color = c.inkSoft)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text(formatWon(o.total), fontSize = 19.sp, fontWeight = FontWeight.Black, color = c.ink)
+                    OptionChip("또 담기", selected = false, enabled = !s.agentBusy, soldOut = false) { onReorder(o) }
+                }
+            }
+        }
+    }
+}
+
 // 5. 주문 확인 --------------------------------------------------------------
 
 @Composable
 fun ConfirmScreen(s: ShopState, onYes: () -> Unit, onNo: () -> Unit, onMic: () -> Unit) {
     val c = ShopTheme.colors
-    val p = s.current ?: return
-    val total = p.total(s.qty, s.selected)
+    if (s.cart.isEmpty()) return
+    val total = s.cart.total()
     Page(bottom = {
         // "아니요"도 같은 크기. 작은 취소 버튼은 잘못 누르기 쉽다.
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -348,8 +425,9 @@ fun ConfirmScreen(s: ShopState, onYes: () -> Unit, onNo: () -> Unit, onMic: () -
     }) {
         if (s.bubble.isNotEmpty()) ReplyBubble(s.bubble)
         Title("이대로 주문할까요?")
-        Fact("상품", "${p.name} · ${s.qty}개")
-        if (s.selected.isNotEmpty()) Fact("옵션", s.selected.entries.joinToString(", ") { "${it.key} ${it.value}" })
+        s.cart.forEach { l ->
+            Fact(l.name + (if (l.options.isEmpty()) "" else " " + l.options.values.joinToString(" ")) + " × ${l.qty}", formatWon(l.total))
+        }
         Fact("받는 곳", "서울 노원구 상계로 77\n$DEMO_USER_NAME 님")
         Fact("결제", "국민카드 ****1234")
         Column(
@@ -384,10 +462,10 @@ fun DoneScreen(s: ShopState, onHome: () -> Unit) {
             if (s.bubble.isNotEmpty()) ReplyBubble(s.bubble)
             Title("주문했어요")
             Text(
-                "${s.current?.arriveLabel}에 도착해요\n가족께 알렸어요",
+                "차례로 도착해요\n가족께 알렸어요",
                 fontSize = 19.sp, lineHeight = 28.sp, color = c.inkSoft, textAlign = TextAlign.Center,
             )
-            s.orderId?.let { Text("주문번호 $it", fontSize = 17.sp, color = c.inkSoft) }
+            if (s.orderIds.isNotEmpty()) Text("주문 ${s.orderIds.size}건 · 주문번호 ${s.orderIds.first()}" + if (s.orderIds.size > 1) " 외" else "", fontSize = 17.sp, color = c.inkSoft)
         }
     }
 }

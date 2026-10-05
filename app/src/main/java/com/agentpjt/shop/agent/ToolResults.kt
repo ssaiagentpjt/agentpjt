@@ -1,12 +1,14 @@
 package com.agentpjt.shop.agent
 
 import com.agentpjt.shop.api.OrderDto
+import com.agentpjt.shop.shop.CartLine
 import com.agentpjt.shop.shop.ProductDetail
 import com.agentpjt.shop.shop.ProductSummary
 import com.agentpjt.shop.shop.readWon
+import com.agentpjt.shop.shop.total
 
 /**
- * 관찰 행동(search·info·history)의 결과를 모델에게 돌려줄 평문. "(앱)"으로 시작해 사용자 말과 구분한다.
+ * 관찰 행동(search·info·history·장바구니 편집)의 결과를 모델에게 돌려줄 평문. "(앱)"으로 시작해 사용자 말과 구분한다.
  * 온디바이스 모델은 입력이 길수록 느리고 판단이 흐려져서 고르는 데 필요한 사실만 담는다.
  */
 object ToolResults {
@@ -21,7 +23,7 @@ object ToolResults {
     private fun ProductSummary.line() = buildString {
         append("$id $name · $priceSpoken · $tier · 별점 $rating")
         if (badges.isNotEmpty()) append(" · ${badges.take(2).joinToString("/")}")
-        if (options.isNotEmpty()) append(" · 옵션 ${options.keys.joinToString("/")}")
+        if (options.isNotEmpty()) append(" · 옵션 " + options.entries.joinToString(" ") { "${it.key}(${it.value.joinToString("/")})" })
         if (stock == "low") append(" · 품절 임박")
     }
 
@@ -50,4 +52,11 @@ object ToolResults {
                     if (o.options.isEmpty()) "" else " (" + o.options.entries.joinToString { "${it.key} ${it.value}" } + ")"
             }
         }
+
+    /** 장바구니 줄 한 줄. 턴 메시지와 편집 결과에서 함께 쓴다 */
+    fun line(l: CartLine): String =
+        "${l.lineId} ${l.name}" + (if (l.options.isEmpty()) "" else " (" + l.options.values.joinToString(" ") + ")") + " ${l.qty}개 · ${readWon(l.total)}"
+
+    fun cart(cart: List<CartLine>): String =
+        if (cart.isEmpty()) "장바구니가 비었다." else "장바구니 ${cart.size}가지: " + cart.joinToString(" / ") { line(it) } + " / 합계 ${readWon(cart.total())}"
 }

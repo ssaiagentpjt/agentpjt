@@ -1,6 +1,7 @@
 package com.agentpjt.shop.agent
 
 import android.util.Log
+import com.agentpjt.shop.shop.CartLine
 import com.agentpjt.shop.shop.ShopState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
@@ -12,17 +13,15 @@ private const val TAG = "ShopAgent"
 sealed interface AgentTurn {
     val state: ShopState
 
-    /** 화면이 바뀌었거나(show·open·order·place·cancel·home) 같은 화면이 갱신됐다(option·quantity). 그 화면 대본을 읽는다 */
+    /** 끝맺음 행동으로 화면이 바뀌었다(show·open·show_cart·show_history·checkout·place·cancel·home). 그 화면 대본을 읽는다 */
     data class Moved(override val state: ShopState) : AgentTurn
-
-    /** 주문하려는데 옵션이 빠졌다. 상세 화면에서 그 옵션을 고르게 한다 */
-    data class NeedOption(override val state: ShopState, val choices: Map<String, List<String>>) : AgentTurn
 
     /** 손주야가 묻거나(ask) 답했다(answer). 화면은 그대로 두고 그 문장을 보이고 읽는다 */
     data class Said(override val state: ShopState, val text: String) : AgentTurn
 
     data class Failed(override val state: ShopState, val reason: Reason) : AgentTurn
 
+    /** REJECTED: 끝맺음 행동이 거절됐다(결제가 막힌 줄은 state.cartProblem) */
     enum class Reason { OFFLINE, STEP_LIMIT, ENGINE, REJECTED }
 }
 
@@ -42,15 +41,23 @@ class AgentLoop(
 
     suspend fun reset() = lock.withLock { decider.reset() }
 
-    /** [onProgress] 는 관찰 행동을 시작할 때 부른다(말하기 화면 진행 표시). */
-    suspend fun handle(heard: String, state: ShopState, onProgress: (String) -> Unit = {}): AgentTurn = lock.withLock {
+    /**
+     * [onProgress] 는 관찰 행동을 시작할 때(말하기 화면 진행 표시), [onCart] 는 관찰 행동이 장바구니를 바꿨을 때 부른다
+     * (턴이 끝나기 전에도 화면의 장바구니 개수가 바로 바뀌게).
+     */
+    suspend fun handle(
+        heard: String,
+        state: ShopState,
+        onProgress: (String) -> Unit = {},
+        onCart: (List<CartLine>) -> Unit = {},
+    ): AgentTurn = lock.withLock {
         if (decider.tokenCount() > maxTokens) {
             Log.i(TAG, "tokens=${decider.tokenCount()} > $maxTokens, 대화를 새로 연다")
             decider.reset()
         }
         val started = System.nanoTime()
-        var s = state
-        var message = turnMessage(s, heard)
+        var message = turnMessage(state, heard)
+        var s = state.copy(notes = emptyList()) // 메모는 이번 메시지에 붙였다
         Log.i(TAG, "heard \"$heard\" | ${message.replace("\n", " | ")}")
 
         repeat(maxSteps) { step ->
@@ -81,15 +88,12 @@ class AgentLoop(
             if (out.offline) return@withLock AgentTurn.Failed(s, AgentTurn.Reason.OFFLINE)
 
             if (action.kind.observes) {
+                if (out.state.cart != state.cart) onCart(out.state.cart)
                 message = out.result // 결과(실패 사유 포함)를 사실로 돌려주고 다음 행동은 모델이 고른다
                 return@repeat
             }
             Log.i(TAG, "end ${action.kind.wire} ok=${out.ok} screen=${s.screen} total=${elapsed(started)}ms tokens=${decider.tokenCount()}")
-            return@withLock when {
-                out.ok -> AgentTurn.Moved(s)
-                out.choices.isNotEmpty() -> AgentTurn.NeedOption(s, out.choices)
-                else -> AgentTurn.Failed(s, AgentTurn.Reason.REJECTED)
-            }
+            return@withLock if (out.ok) AgentTurn.Moved(s) else AgentTurn.Failed(s, AgentTurn.Reason.REJECTED)
         }
         Log.w(TAG, "step limit $maxSteps total=${elapsed(started)}ms")
         AgentTurn.Failed(s, AgentTurn.Reason.STEP_LIMIT)
@@ -99,6 +103,8 @@ class AgentLoop(
         is Action.Search -> "'${a.query}' 찾고 있어요"
         is Action.Info -> "상품 정보를 보고 있어요"
         Action.History -> "지난 구매를 보고 있어요"
+        is Action.CartAdd -> "장바구니에 담고 있어요"
+        is Action.CartRemove, is Action.CartQuantity -> "장바구니를 고치고 있어요"
         else -> ""
     }
 

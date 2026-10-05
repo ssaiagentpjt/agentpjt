@@ -108,8 +108,15 @@ data class ProductFullDto(
     val productImage: String,
 )
 
+/** 장바구니 결제: 모든 줄을 서버가 먼저 검사하고, 하나라도 안 되면 아무것도 주문하지 않는다(POST /orders/batch). */
 @Serializable
-data class OrderInDto(val userId: String, val productId: String, val quantity: Int, val options: Map<String, String>)
+data class BatchOrderInDto(val userId: String, val items: List<OrderItemDto>)
+
+@Serializable
+data class OrderItemDto(val productId: String, val quantity: Int, val options: Map<String, String>)
+
+@Serializable
+data class BatchOrderDto(val orders: List<OrderDto>, val totalPrice: Int)
 
 @Serializable
 data class OrderDto(
@@ -132,4 +139,7 @@ data class OrderErrorDetailDto(
     val unknownOptions: List<String> = emptyList(),
     val soldOut: List<String> = emptyList(),
     val choices: Map<String, List<String>> = emptyMap(),
+    /** 여러 상품 주문에서 문제가 된 줄(0부터) */
+    val index: Int? = null,
+    val productId: String? = null,
 )

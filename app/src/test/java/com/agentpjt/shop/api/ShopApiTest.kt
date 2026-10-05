@@ -48,18 +48,20 @@ class ShopApiTest {
     }
 
     @Test
-    fun placeOrder_422_parsesChoices() = runTest {
+    fun placeBatch_422_parsesChoicesAndLine() = runTest {
         server.enqueue(json(422, """{"detail":{"message":"옵션을 골라야 한다","missing":["사이즈"],"invalid":{},
-            "unknownOptions":[],"choices":{"사이즈":["M","L","XL"]}}}"""))
+            "unknownOptions":[],"choices":{"사이즈":["M","L","XL"]},"index":1,"productId":"p07002"}}"""))
 
-        val r = api.placeOrder(OrderInDto("u001", "p07002", 1, emptyMap()))
+        val r = api.placeBatch(BatchOrderInDto("u001", listOf(OrderItemDto("p03003", 2, emptyMap()), OrderItemDto("p07002", 1, emptyMap()))))
 
         val req = server.takeRequest()
         assertEquals("POST", req.method)
-        assertTrue(req.body!!.utf8().contains("\"productId\":\"p07002\""))
+        assertEquals("/orders/batch", req.url.encodedPath)
+        assertTrue(req.body!!.utf8().contains("\"items\":[{\"productId\":\"p03003\",\"quantity\":2"))
         val http = r as ApiResult.Http
         assertEquals(422, http.code)
         assertEquals(listOf("M", "L", "XL"), http.order!!.choices["사이즈"])
+        assertEquals(1, http.order!!.index)
     }
 
     @Test

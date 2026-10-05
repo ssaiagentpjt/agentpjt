@@ -38,7 +38,7 @@ object Scripts {
             products.take(3).mapIndexed { i, p ->
                 Utterance("$ITEM_PREFIX$i", "${ORDINALS[i]} 번째, ${p.name}, ${p.priceSpoken}, ${p.arriveSpoken} 도착해요.")
             } +
-            Utterance("results-ask", "마음에 드는 번호를 말씀하시거나 눌러 주세요.")
+            Utterance("results-ask", "마음에 드는 번호를 말씀하시거나, 담기를 눌러 주세요.")
 
     fun detail(p: ProductDetail, selected: Map<String, String> = emptyMap()) = listOf(
         Utterance(
@@ -51,23 +51,45 @@ object Scripts {
                     p.missing(selected).isNotEmpty() -> p.missing(selected).entries.first().let { (name, values) ->
                         "${name}는 ${values.joinToString(", ")} 중에 고르실 수 있어요."
                     }
-                    else -> "몇 개 드릴까요?"
+                    else -> "장바구니에 담을까요?"
                 },
         ),
     )
 
-    fun confirm(p: ProductDetail, qty: Int, selected: Map<String, String> = emptyMap()): List<Utterance> {
-        val opts = if (selected.isEmpty()) "" else selected.values.joinToString(" ", postfix = ", ")
+    fun cart(lines: List<CartLine>): List<Utterance> =
+        if (lines.isEmpty()) {
+            listOf(Utterance("cart", "장바구니가 비어 있어요. 사고 싶은 것을 말씀해 주세요."))
+        } else {
+            listOf(Utterance("cart", "장바구니에 ${koCount(lines.size)} 가지, 배송비 포함 ${readWon(lines.total())}이에요. 주문하시려면 주문하기를 누르거나 말씀해 주세요."))
+        }
+
+    fun confirm(lines: List<CartLine>): List<Utterance> {
+        val items = lines.joinToString(", ") { l -> l.name + (if (l.options.isEmpty()) "" else " " + l.options.values.joinToString(" ")) + " ${koCount(l.qty)} 개" }
         return listOf(
             Utterance(
                 "confirm",
-                "${p.name}, $opts${koCount(qty)} 개, 배송비 포함 ${readWon(p.total(qty, selected))}입니다. " +
+                "$items, 배송비 포함 ${readWon(lines.total())}입니다. " +
                     "국민카드로 결제할까요? 네라고 말씀하시거나 아래 버튼을 눌러 주세요.",
             ),
         )
     }
 
-    fun done(p: ProductDetail) = listOf(
-        Utterance("done", "주문했어요. ${p.arriveSpoken} 도착해요. 가족께도 알려 드렸어요."),
+    /** 결제가 막혔다. 서버는 아무것도 주문하지 않았다 */
+    fun orderBlocked(line: CartLine?) = listOf(
+        Utterance(
+            "order-blocked",
+            (line?.let { "${it.name}는 " } ?: "") + "지금 주문할 수 없어서 아무것도 주문하지 않았어요. 빼거나 다른 걸로 바꿔 주세요.",
+        ),
     )
+
+    fun done(count: Int) = listOf(
+        Utterance("done", "주문했어요. ${koCount(count)} 가지예요. 가족께도 알려 드렸어요."),
+    )
+
+    fun history(orders: List<PastOrder>): List<Utterance> =
+        if (orders.isEmpty()) {
+            listOf(Utterance("history", "아직 주문하신 것이 없어요."))
+        } else {
+            listOf(Utterance("history", "최근에 사신 것들이에요. 또 사실 것이 있으면 또 담기를 누르거나 말씀해 주세요."))
+        }
 }

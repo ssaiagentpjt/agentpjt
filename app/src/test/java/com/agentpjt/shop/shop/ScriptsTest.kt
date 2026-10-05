@@ -28,15 +28,18 @@ class ScriptsTest {
         assertTrue(Scripts.detail(cane).single().text.contains("배송비 삼천 원이 붙어요"))
         val text = Scripts.detail(knee).single().text
         assertTrue(text, text.contains("사이즈는 M, L, XL 중에 고르실 수 있어요"))
-        assertTrue(Scripts.detail(knee, mapOf("사이즈" to "L")).single().text.contains("몇 개 드릴까요"))
+        assertTrue(Scripts.detail(knee, mapOf("사이즈" to "L")).single().text.contains("장바구니에 담을까요"))
     }
 
     @Test
-    fun confirm_readsTotalIncludingShippingAndOptionPrice() {
-        assertEquals(19900 * 2 + 3000, cane.total(2, emptyMap()))
-        assertTrue(Scripts.confirm(cane, 2).single().text.startsWith("접이식 알루미늄 지팡이, 두 개, 배송비 포함 사만 이천팔백 원입니다."))
-        val text = Scripts.confirm(knee, 1, mapOf("사이즈" to "XL")).single().text
-        assertTrue(text, text.startsWith("무릎 보호대 2개입, XL, 한 개, 배송비 포함 만 팔천구백 원입니다."))
+    fun confirm_readsEveryLineAndTotalIncludingShippingAndOptionPrice() {
+        val lines = listOf(
+            CartLine("c1", "p07001", "접이식 알루미늄 지팡이", 19900, 0, emptyMap(), 2, 3000),
+            CartLine("c2", "p07002", "무릎 보호대 2개입", 16900, 2000, mapOf("사이즈" to "XL"), 1, 0),
+        )
+        assertEquals(19900 * 2 + 3000 + 16900 + 2000, lines.total())
+        val text = Scripts.confirm(lines).single().text
+        assertTrue(text, text.startsWith("접이식 알루미늄 지팡이 두 개, 무릎 보호대 2개입 XL 한 개, 배송비 포함 육만 천칠백 원입니다."))
     }
 
     @Test

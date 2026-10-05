@@ -58,13 +58,15 @@ fun ShopApp(vm: ShopViewModel = viewModel()) {
         if (s.offline) Notice("인터넷에 연결되지 않아 상품을 불러오지 못했어요. 연결을 확인해 주세요.")
         Box(Modifier.weight(1f)) {
             when (s.screen) {
-                Screen.Home -> HomeScreen(s, onMic = onMic, onExample = vm::submitText, onDevMenu = vm::openDevMenu)
+                Screen.Home -> HomeScreen(s, onMic = onMic, onExample = vm::submitText, onDevMenu = vm::openDevMenu, onCart = vm::openCart, onHistory = vm::openHistory)
                 Screen.Listening -> ListeningScreen(s, onDone = vm::finishListening, onCancel = vm::cancelListening)
                 Screen.Results -> ResultsScreen(s, speaking, onPick = vm::pick, onStopReading = vm::stopReading, onMic = onMic)
                 Screen.Detail -> DetailScreen(
-                    s, onQty = vm::changeQty, onOption = vm::chooseOption, onOrder = vm::order,
+                    s, onQty = vm::changeQty, onOption = vm::chooseOption, onAdd = vm::addCurrent,
                     onOthers = { vm.go(Screen.Results) }, onMic = onMic,
                 )
+                Screen.Cart -> CartScreen(s, onQty = vm::changeLineQty, onRemove = vm::removeLine, onCheckout = vm::checkout, onMic = onMic)
+                Screen.History -> HistoryScreen(s, onReorder = vm::reorder, onMic = onMic)
                 Screen.Confirm -> ConfirmScreen(s, onYes = vm::placeOrder, onNo = vm::cancelOrder, onMic = onMic)
                 Screen.Done -> DoneScreen(s, onHome = { vm.go(Screen.Home) })
                 Screen.DevLlm -> LlmTestScreen()

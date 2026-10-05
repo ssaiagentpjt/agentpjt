@@ -10,7 +10,8 @@ import com.agentpjt.shop.api.OptionBriefDto
 import com.agentpjt.shop.api.OptionValueDto
 import com.agentpjt.shop.api.OrderDto
 import com.agentpjt.shop.api.OrderErrorDetailDto
-import com.agentpjt.shop.api.OrderInDto
+import com.agentpjt.shop.api.BatchOrderDto
+import com.agentpjt.shop.api.BatchOrderInDto
 import com.agentpjt.shop.api.PriceTierDto
 import com.agentpjt.shop.api.PricingDto
 import com.agentpjt.shop.api.ProductCompactDto
@@ -61,12 +62,12 @@ object TestData {
 class FakeShopApi : ShopApi {
     var searchResult: ApiResult<SearchDto> = ApiResult.Ok(SearchDto("", 0, emptyList()))
     val products = mutableMapOf<String, ProductFullDto>()
-    var orderResult: ApiResult<OrderDto>? = null
+    var orderResult: ApiResult<BatchOrderDto>? = null
     var history: ApiResult<List<OrderDto>> = ApiResult.Ok(emptyList())
     var offline = false
 
     val searches = mutableListOf<SearchQuery>()
-    val orders = mutableListOf<OrderInDto>()
+    val orders = mutableListOf<BatchOrderInDto>()
 
     private val net = ApiResult.Network(java.io.IOException("offline"))
 
@@ -80,10 +81,13 @@ class FakeShopApi : ShopApi {
         else -> products[id]?.let { ApiResult.Ok(it) } ?: ApiResult.Http(404, "없는 상품: $id")
     }
 
-    override suspend fun placeOrder(order: OrderInDto): ApiResult<OrderDto> {
+    override suspend fun placeBatch(order: BatchOrderInDto): ApiResult<BatchOrderDto> {
         orders += order
         if (offline) return net
-        return orderResult ?: ApiResult.Ok(OrderDto("M-20261005-1234", order.userId, order.productId, "상품", order.quantity, order.options, 1, "2026-10-05T10:00:00+09:00"))
+        return orderResult ?: ApiResult.Ok(BatchOrderDto(
+            order.items.mapIndexed { i, it -> OrderDto("M-20261005-${1234 + i}", order.userId, it.productId, "상품", it.quantity, it.options, 1, "2026-10-05T10:00:00+09:00") },
+            order.items.size,
+        ))
     }
 
     override suspend fun orders(userId: String, limit: Int): ApiResult<List<OrderDto>> = if (offline) net else history

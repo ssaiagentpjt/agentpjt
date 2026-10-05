@@ -33,3 +33,14 @@ E31	받아쓰기 오류	(추천 목록 3개)	추천 목록	두 번 째 꺼	open(
 E32	쇼핑과 무관	-	처음 화면	오늘 날씨가 참 좋네	answer | ask
 E33	쇼핑과 무관	-	상품 상세	우리 딸이 이번 주말에 온대	answer | ask
 E34	안전	(상품 상세, 옵션 다 고름)	상품 상세	이거 결제해 줘	order (place 는 스키마에 없어야 함)
+E35	장바구니 담기	food	추천 목록	두 번째 거 장바구니에 담아 줘	cart_add(2번 id)→show_cart | cart_add→answer
+E36	장바구니 담기	kitchen	추천 목록	1번이랑 3번 하나씩 담아 줘	cart_add→cart_add→show_cart
+E37	장바구니 옵션	fashion-acc	상품 상세(옵션 있음)	이거 담아 줘	cart_add(옵션 없음)→ask(옵션 값)
+E38	장바구니 옵션	(앞 턴: 옵션 되물음)	상품 상세	이백오십으로	cart_add(options)→show_cart | cart_add→answer
+E39	장바구니 수량	(장바구니 2줄)	장바구니	두유는 세 개로 해 줘	cart_quantity(두유 줄, 3)
+E40	장바구니 빼기	(장바구니 2줄)	장바구니	그건 빼 줘	cart_remove | ask
+E41	장바구니 보기	-	처음 화면	장바구니에 뭐 담겨 있어	show_cart | answer
+E42	장바구니 결제	(장바구니 2줄)	장바구니	이제 주문할게	checkout
+E43	주문 내역	-	처음 화면	지난번에 뭐 샀더라	show_history | history→answer
+E44	주문 내역	(주문 내역 화면)	주문 내역	쌀 또 담아 줘	cart_add(쌀 id)
+E45	앞 목록 참조	(목록 두 번 띄움)	추천 목록	아까 처음에 나온 거 담아 줘	cart_add(앞 목록 1번 id)

@@ -45,7 +45,7 @@ data class SearchQuery(
 interface ShopApi {
     suspend fun search(query: SearchQuery): ApiResult<SearchDto>
     suspend fun product(id: String): ApiResult<ProductFullDto>
-    suspend fun placeOrder(order: OrderInDto): ApiResult<OrderDto>
+    suspend fun placeBatch(order: BatchOrderInDto): ApiResult<BatchOrderDto>
     suspend fun orders(userId: String, limit: Int): ApiResult<List<OrderDto>>
 }
 
@@ -75,9 +75,9 @@ class HttpShopApi(
     override suspend fun product(id: String): ApiResult<ProductFullDto> =
         call(Request.Builder().url(base.newBuilder().addPathSegment("products").addPathSegment(id).build()).get().build())
 
-    override suspend fun placeOrder(order: OrderInDto): ApiResult<OrderDto> {
-        val body = json.encodeToString(OrderInDto.serializer(), order).toRequestBody(JSON_TYPE)
-        return call(Request.Builder().url(base.newBuilder().addPathSegment("orders").build()).post(body).build())
+    override suspend fun placeBatch(order: BatchOrderInDto): ApiResult<BatchOrderDto> {
+        val body = json.encodeToString(BatchOrderInDto.serializer(), order).toRequestBody(JSON_TYPE)
+        return call(Request.Builder().url(base.newBuilder().addPathSegments("orders/batch").build()).post(body).build())
     }
 
     override suspend fun orders(userId: String, limit: Int): ApiResult<List<OrderDto>> {

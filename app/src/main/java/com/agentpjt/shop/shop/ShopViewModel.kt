@@ -19,11 +19,16 @@ import com.agentpjt.shop.voice.ListenState
 import com.agentpjt.shop.voice.Listener
 import com.agentpjt.shop.voice.Speaker
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 private const val TAG = "ShopAgent"
@@ -39,7 +44,9 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
     // 말(에이전트)과 터치가 같은 실행기를 쓴다. 주문 경로와 안전 검사가 한 곳에 있다
     private val executor = ToolExecutor(HttpShopApi(BuildConfig.SHOP_API_BASE_URL, BuildConfig.SHOP_API_KEY))
 
-    private val _state = MutableStateFlow(ShopState())
+    private val cartStore = CartStore(File(app.filesDir, "cart.json"))
+
+    private val _state = MutableStateFlow(ShopState(cart = cartStore.load()))
     val state: StateFlow<ShopState> = _state
 
     private var engine: GemmaEngine? = null
@@ -53,6 +60,10 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
         speaker.speak(Scripts.home())
         viewModelScope.launch { loadModel() }
         viewModelScope.launch { listener.state.collect(::onListen) }
+        // 장바구니가 바뀔 때마다 파일에 둔다. 말로 바꾸든 터치로 바꾸든 상태 하나만 보면 된다
+        viewModelScope.launch {
+            _state.map { it.cart }.distinctUntilChanged().drop(1).collect { cart -> withContext(Dispatchers.IO) { cartStore.save(cart) } }
+        }
     }
 
     private suspend fun loadModel() {
@@ -104,6 +115,8 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
 
     fun cancelListening() {
         listener.cancel()
+        // 판단 중에 그만두면 모델 대화에는 행동만 남고 결과가 없다. 다음 턴에 그 사실을 알린다
+        if (agentJob?.isActive == true) _state.update { it.copy(notes = it.notes + "앞의 요청은 어르신이 중단했다.") }
         agentJob?.cancel()
         _state.update { it.copy(agentBusy = false) }
         go(_state.value.returnTo, speak = false)
@@ -136,7 +149,11 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
         agentJob = viewModelScope.launch {
             val before = _state.value
             val turn = try {
-                a.handle(heard, before) { p -> _state.update { it.copy(progress = p) } }
+                a.handle(
+                    heard, before,
+                    onProgress = { p -> _state.update { it.copy(progress = p) } },
+                    onCart = { c -> _state.update { it.copy(cart = c) } },
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
@@ -160,17 +177,19 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
                 speakScreen()
                 if (st.screen == Screen.Home) viewModelScope.launch { agent?.reset() } // 쇼핑 세션마다 대화를 새로 연다
             }
-            is AgentTurn.NeedOption -> {
-                _state.value = st.copy(missingOption = turn.choices.keys.first())
-                speaker.speak(Scripts.askOption(turn.choices))
-            }
             is AgentTurn.Said -> {
                 _state.value = st.copy(bubble = SpeechText.clean(turn.text))
                 speaker.speak(Scripts.say(turn.text))
             }
             is AgentTurn.Failed -> {
                 _state.value = st
-                speaker.speak(if (turn.reason == AgentTurn.Reason.OFFLINE) Scripts.networkError() else Scripts.agentFailed())
+                speaker.speak(
+                    when {
+                        turn.reason == AgentTurn.Reason.OFFLINE -> Scripts.networkError()
+                        st.cartProblem != null -> Scripts.orderBlocked(st.cart.firstOrNull { it.lineId == st.cartProblem })
+                        else -> Scripts.agentFailed()
+                    },
+                )
             }
         }
     }
@@ -179,34 +198,80 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
 
     fun pick(index: Int) {
         val p = _state.value.shown.getOrNull(index) ?: return
-        touch(Action.Open(p.id))
+        touch(Action.Open(p.id), "화면에서 ${index + 1}번 ${p.name} 상세를 열었다")
     }
 
-    fun chooseOption(name: String, value: String) = touch(Action.Option(name, value))
+    /** 추천 카드의 "담기". 옵션이 있으면 상세를 열어 고르게 한다 */
+    fun addShown(index: Int) {
+        val p = _state.value.shown.getOrNull(index) ?: return
+        touch(Action.CartAdd(p.id), "화면에서 ${p.name}를 장바구니에 담았다")
+    }
+
+    /** 상세 화면 옵션 칩. 담기 전까지는 화면에만 둔다 */
+    fun chooseOption(name: String, value: String) = _state.update { it.copy(selected = it.selected + (name to value), missingOption = null) }
 
     fun changeQty(delta: Int) = _state.update { it.copy(qty = (it.qty + delta).coerceIn(1, 9)) }
 
-    /** 상세 화면 "주문하기". 옵션이 빠졌으면 확인 화면으로 가지 않고 어떤 옵션을 골라야 하는지 읽어 준다 */
-    fun order() = touch(Action.Order())
+    /** 상세 화면 "장바구니에 담기" */
+    fun addCurrent() {
+        val s = _state.value
+        val d = s.current ?: return
+        touch(Action.CartAdd(d.id, s.qty, s.selected), "화면에서 ${d.name}를 장바구니에 담았다")
+    }
+
+    fun changeLineQty(lineId: String, delta: Int) {
+        val line = _state.value.cart.firstOrNull { it.lineId == lineId } ?: return
+        val count = line.qty + delta
+        if (count in 1..9) touch(Action.CartQuantity(lineId, count), "화면에서 ${line.name} 수량을 ${count}개로 바꿨다")
+    }
+
+    fun removeLine(lineId: String) {
+        val line = _state.value.cart.firstOrNull { it.lineId == lineId } ?: return
+        touch(Action.CartRemove(lineId), "화면에서 ${line.name}를 장바구니에서 뺐다")
+    }
+
+    /** 주문 내역의 "또 담기". 그때 고른 옵션 그대로 담는다 */
+    fun reorder(o: PastOrder) = touch(Action.CartAdd(o.productId, o.qty, o.options), "화면에서 지난번에 산 ${o.name}를 다시 담았다")
+
+    fun openCart() = touch(Action.ShowCart, null)
+
+    fun openHistory() = touch(Action.ShowHistory, null)
+
+    /** 장바구니 "주문하기" */
+    fun checkout() = touch(Action.Checkout, null)
 
     /** 확인 화면 "네, 주문" */
-    fun placeOrder() = touch(Action.Place)
+    fun placeOrder() = touch(Action.Place, null)
 
     /** 확인 화면 "아니요" */
-    fun cancelOrder() = touch(Action.Cancel)
+    fun cancelOrder() = touch(Action.Cancel, null)
 
-    private fun touch(action: Action) {
+    /**
+     * 터치 동작. 말과 같은 실행기를 거친다. [note] 는 다음 말하기 턴에 모델에게 알릴 사실이다
+     * (터치로 한 일은 모델 대화에 남지 않아서, 그대로 두면 "방금 담은 거"를 모른다).
+     */
+    private fun touch(action: Action, note: String?) {
         val s = _state.value
         if (s.agentBusy) return
         _state.update { it.copy(agentBusy = true) }
         viewModelScope.launch {
             val out = executor.execute(action, s)
-            _state.value = out.state.copy(agentBusy = false, bubble = "", missingOption = if (out.choices.isEmpty()) null else out.choices.keys.first())
+            Log.i(TAG, "touch $action ok=${out.ok} screen=${out.state.screen} ${out.result}")
+            val notes = if (out.ok && note != null) out.state.notes + note else out.state.notes
+            _state.value = out.state.copy(agentBusy = false, bubble = "", missingOption = null, notes = notes)
             when {
-                // 터치로 옵션을 고른 것처럼 화면이 그대로면 읽지 않는다. 어르신이 방금 본 것을 되풀이하지 않는다
                 out.ok -> if (out.state.screen != s.screen) speakScreen()
                 out.offline -> speaker.speak(Scripts.networkError())
-                out.choices.isNotEmpty() -> speaker.speak(Scripts.askOption(out.choices))
+                // 옵션을 골라야 담을 수 있다: 상세 화면에서 그 옵션을 강조하고 읽어 준다
+                action is Action.CartAdd && out.choices.isNotEmpty() -> {
+                    if (out.state.current?.id != action.productId) {
+                        val opened = executor.execute(Action.Open(action.productId), out.state)
+                        _state.value = opened.state.copy(agentBusy = false, notes = notes)
+                    }
+                    _state.update { it.copy(missingOption = out.choices.keys.first()) }
+                    speaker.speak(Scripts.askOption(out.choices))
+                }
+                out.state.cartProblem != null -> speaker.speak(Scripts.orderBlocked(out.state.cart.firstOrNull { it.lineId == out.state.cartProblem }))
                 else -> speaker.speak(Scripts.agentFailed())
             }
         }
@@ -222,7 +287,7 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
     /** 화면을 바꾸고 그 화면의 대본을 읽는다. */
     fun go(screen: Screen, speak: Boolean = true) {
         if (screen == Screen.Home) {
-            _state.update { ShopState(ai = it.ai, micDenied = it.micDenied) }
+            _state.update { it.freshSession() }
             viewModelScope.launch { agent?.reset() } // 쇼핑 세션마다 대화를 새로 연다
         } else {
             _state.update { it.copy(screen = screen, bubble = "", missingOption = null) }
@@ -237,8 +302,10 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
             Screen.Home -> speaker.speak(Scripts.home())
             Screen.Results -> speaker.speak(Scripts.results(s.label, s.shown))
             Screen.Detail -> p?.let { speaker.speak(Scripts.detail(it, s.selected)) }
-            Screen.Confirm -> p?.let { speaker.speak(Scripts.confirm(it, s.qty, s.selected)) }
-            Screen.Done -> p?.let { speaker.speak(Scripts.done(it)) }
+            Screen.Cart -> speaker.speak(Scripts.cart(s.cart))
+            Screen.Confirm -> speaker.speak(Scripts.confirm(s.cart))
+            Screen.Done -> speaker.speak(Scripts.done(s.orderIds.size))
+            Screen.History -> speaker.speak(Scripts.history(s.pastOrders))
             Screen.Listening, Screen.DevLlm -> speaker.stop()
         }
     }
@@ -249,9 +316,10 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
         when (s.screen) {
             Screen.Home -> return false
             Screen.Listening -> cancelListening()
-            Screen.Results, Screen.Done, Screen.DevLlm -> go(Screen.Home)
+            Screen.Results, Screen.Done, Screen.History, Screen.DevLlm -> go(Screen.Home)
             Screen.Detail -> go(if (s.shown.isEmpty()) Screen.Home else Screen.Results)
-            Screen.Confirm -> go(Screen.Detail)
+            Screen.Cart -> go(if (s.shown.isNotEmpty()) Screen.Results else Screen.Home)
+            Screen.Confirm -> go(Screen.Cart)
         }
         return true
     }
