@@ -1,0 +1,42 @@
+# 홈서버 운영용. 로컬에서 직접 빌드할 때는 server/compose.yaml 을 쓴다.
+#
+# 흐름: main 에 server/ 변경이 올라가면 GitHub Actions 가 ghcr.io/ssaiagentpjt/agentpjt-shop-api:latest 를 새로 올리고,
+#       watchtower 가 5분 안에 받아 shop-api 를 다시 띄운다. 공개 주소는 cloudflared 터널이 연결한다.
+# 실행: 이 파일과 같은 폴더에 .env(env.example 을 복사해 채움)를 두고 `docker compose up -d`
+# 되돌리기: shop-api 의 image 를 :sha-<짧은 해시> 로 고정하고 `docker compose up -d`(그동안 watchtower 는 그 태그만 본다)
+name: agentpjt-shop
+
+services:
+  shop-api:
+    image: ghcr.io/ssaiagentpjt/agentpjt-shop-api:latest
+    restart: unless-stopped
+    # 포트를 열지 않는다. 같은 네트워크의 cloudflared 만 http://shop-api:8000 으로 붙는다
+    expose:
+      - "8000"
+    environment:
+      SHOP_API_KEY: ${SHOP_API_KEY:?.env 에 SHOP_API_KEY 를 지정해야 한다}
+      SHOP_PUBLIC_BASE_URL: ${SHOP_PUBLIC_BASE_URL:-https://shop-api.bomun.dev}
+    volumes:
+      - shop-db:/srv/var  # 주문 이력. 상품은 이미지 안의 시드로 매번 다시 적재한다
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.9.3
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?.env 에 CLOUDFLARE_TUNNEL_TOKEN 을 지정해야 한다}
+    depends_on:
+      - shop-api
+
+  watchtower:
+    # 원본 containrrr/watchtower 는 archived. 유지되는 포크를 쓴다(github.com/nicholas-fedor/watchtower)
+    image: nickfedor/watchtower:latest
+    restart: unless-stopped
+    command: --label-enable --interval 300 --cleanup
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  shop-db:

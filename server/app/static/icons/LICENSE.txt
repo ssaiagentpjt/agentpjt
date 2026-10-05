@@ -1,0 +1,21 @@
+Category icons in this folder are from Fluent Emoji Flat by Microsoft,
+downloaded through the Iconify API (https://api.iconify.design/fluent-emoji-flat/<name>.svg).
+License: MIT — https://github.com/microsoft/fluentui-emoji/blob/main/LICENSE
+
+file -> icon name
+food.svg -> pot-of-food
+health-food.svg -> pill
+medical.svg -> stethoscope
+living.svg -> basket
+kitchen.svg -> cooking
+hygiene.svg -> soap
+silver.svg -> white-cane
+digital.svg -> television
+fashion.svg -> t-shirt
+fashion-acc.svg -> running-shoe
+beauty.svg -> lipstick
+sports.svg -> mountain
+interior.svg -> bed
+pet.svg -> dog-face
+kids.svg -> teddy-bear
+hobby.svg -> books

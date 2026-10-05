@@ -1,0 +1,7 @@
+[
+  {"orderId": "M-20260712-1031", "userId": "u001", "productId": "p01001", "quantity": 1, "orderedAt": "2026-07-12"},
+  {"orderId": "M-20260814-2207", "userId": "u001", "productId": "p01001", "quantity": 1, "orderedAt": "2026-08-14"},
+  {"orderId": "M-20260820-0415", "userId": "u001", "productId": "p03001", "quantity": 1, "orderedAt": "2026-08-20"},
+  {"orderId": "M-20260903-3302", "userId": "u001", "productId": "p01002", "quantity": 2, "orderedAt": "2026-09-03"},
+  {"orderId": "M-20260912-1188", "userId": "u001", "productId": "p01001", "quantity": 1, "orderedAt": "2026-09-12"}
+]
