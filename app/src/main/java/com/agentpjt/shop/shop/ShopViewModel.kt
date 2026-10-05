@@ -87,10 +87,10 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 매장 분류는 대화를 열기 전에 받는다(지시문에 들어간다). 못 받으면 분류 없이 동작한다 */
     private suspend fun loadCatalog() {
-        when (val r = api.categories()) {
-            is ApiResult.Ok -> _state.update { it.copy(catalog = Catalog(r.value)) }
-            else -> Log.w(TAG, "categories 를 받지 못했다: $r")
-        }
+        val mains = (api.categories() as? ApiResult.Ok)?.value.orEmpty()
+        val needs = (api.needs() as? ApiResult.Ok)?.value.orEmpty().filter { it.productCount > 0 }.map { it.name }
+        if (mains.isEmpty()) Log.w(TAG, "categories 를 받지 못했다")
+        _state.update { it.copy(catalog = Catalog(mains, needs)) }
     }
 
     private fun needModel(error: String? = null) {
@@ -169,7 +169,7 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
             val e = GemmaEngine(file, getApplication<Application>().cacheDir)
             val ms = e.load(BackendKind.CPU)
             engine = e
-            val d = LiteRtDecider(e) { systemPrompt() }
+            val d = LiteRtDecider(e) { systemPrompt(_state.value.catalog) }
             decider = d
             agent = AgentLoop(d, executor).also { it.reset() }
             Log.i(TAG, "model ready ${ms}ms")

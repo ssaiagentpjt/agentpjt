@@ -36,6 +36,10 @@ data class SearchDto(val query: String, val total: Int, val products: List<Produ
 @Serializable
 data class CategoryMainDto(val id: String, val name: String, val mids: List<CategoryMidDto> = emptyList())
 
+/** GET /needs: 상황 태그(어르신이 '무엇이 필요한지'로 말할 때 쓰는 고정 어휘) */
+@Serializable
+data class NeedDto(val name: String, val description: String = "", val productCount: Int = 0)
+
 @Serializable
 data class CategoryMidDto(val id: String, val name: String, val subs: List<NamedDto> = emptyList())
 

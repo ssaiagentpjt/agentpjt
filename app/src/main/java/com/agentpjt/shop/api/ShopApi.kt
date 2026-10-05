@@ -41,6 +41,8 @@ data class SearchQuery(
     /** 분류로 좁히기(서버 대분류·중분류 id) */
     val main: String? = null,
     val mid: String? = null,
+    /** 상황 태그(서버 /needs)로 거르기 */
+    val need: String? = null,
     val limit: Int = 5,
 )
 
@@ -48,6 +50,7 @@ data class SearchQuery(
 interface ShopApi {
     suspend fun search(query: SearchQuery): ApiResult<SearchDto>
     suspend fun categories(): ApiResult<List<CategoryMainDto>>
+    suspend fun needs(): ApiResult<List<NeedDto>>
     suspend fun product(id: String): ApiResult<ProductFullDto>
     suspend fun placeBatch(order: BatchOrderInDto): ApiResult<BatchOrderDto>
     suspend fun orders(userId: String, limit: Int): ApiResult<List<OrderDto>>
@@ -72,11 +75,15 @@ class HttpShopApi(
             query.audience?.let { addQueryParameter("audience", it) }
             query.main?.let { addQueryParameter("main", it) }
             query.mid?.let { addQueryParameter("mid", it) }
+            query.need?.let { addQueryParameter("need", it) }
             addQueryParameter("limit", query.limit.toString())
             addQueryParameter("view", "compact")
         }.build()
         return call(Request.Builder().url(url).get().build())
     }
+
+    override suspend fun needs(): ApiResult<List<NeedDto>> =
+        call(Request.Builder().url(base.newBuilder().addPathSegment("needs").build()).get().build())
 
     override suspend fun categories(): ApiResult<List<CategoryMainDto>> =
         call(Request.Builder().url(base.newBuilder().addPathSegment("categories").build()).get().build())

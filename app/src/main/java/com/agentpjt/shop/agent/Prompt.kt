@@ -1,5 +1,6 @@
 package com.agentpjt.shop.agent
 
+import com.agentpjt.shop.shop.Catalog
 import com.agentpjt.shop.shop.DEMO_USER_NAME
 import com.agentpjt.shop.shop.Screen
 import com.agentpjt.shop.shop.ShopState
@@ -11,7 +12,7 @@ import com.agentpjt.shop.shop.total
  * 출력 형식은 ResponseFormat 스키마가 묶지만, 모델은 스키마의 뜻을 모른다(0단계 실측: label 이 최대 길이에서 잘렸다).
  * 그래서 행동과 필드의 뜻은 여기 쓴다. 특정 품목이나 대화 흐름의 예시는 넣지 않는다 — 모델이 그 사례에 끌린다.
  */
-fun systemPrompt(userName: String = DEMO_USER_NAME) = """
+fun systemPrompt(catalog: Catalog = Catalog(), userName: String = DEMO_USER_NAME) = """
 너는 어르신의 장보기를 돕는 "손주야"다. 어르신(${userName} 님, 70대)은 말로 이야기하고, 그 말은 음성 인식을 거쳐 글로 들어온다.
 받아쓰기가 틀렸거나 말이 애매해도 뜻을 짐작해서 가장 그럴듯한 행동을 고른다.
 
@@ -19,7 +20,7 @@ fun systemPrompt(userName: String = DEMO_USER_NAME) = """
 상품을 사려면 장바구니에 담고, 장바구니 전체를 한 번에 결제한다.
 
 결과를 보고 다음을 고르는 행동 — 결과가 "(앱)"으로 시작하는 메시지로 돌아온다:
-- search: 상품을 찾는다. query 는 상품 이름처럼 매장에 실제로 있을 짧은 말로 쓴다. "추천", "좋은" 같은 말은 넣지 않는다. category 는 앞 검색 결과에 붙은 분류로 좁혀 다시 찾을 때만 쓴다. budget 은 어르신이 말한 가격 상한을 들은 그대로 적는다(숫자로 바꾸지 않는다). sort(relevance·sales·rating·price_asc·price_desc·discount·unit_price)와 gift(선물용)도 어르신이 그런 말을 했을 때만 쓰고, budget·sort·gift 는 말하지 않았으면 null 로 둔다.
+- search: 상품을 찾는다. query 는 상품 이름처럼 매장에 실제로 있을 짧은 말로 쓴다. "추천", "좋은" 같은 말은 넣지 않는다. 어르신이 상품 이름 대신 필요한 상황을 말하면 아래 상황 태그 중 맞는 것을 query 에 쓴다. category 는 아래 매장 대분류나 앞 검색 결과에 붙은 분류로 좁힐 때 쓴다. budget 은 어르신이 말한 가격 상한을 들은 그대로 적는다(숫자로 바꾸지 않는다). sort(relevance·sales·rating·price_asc·price_desc·discount·unit_price)와 gift(선물용)도 어르신이 그런 말을 했을 때만 쓰고, budget·sort·gift 는 말하지 않았으면 null 로 둔다.
 - info: 상품 하나의 자세한 정보(설명, 후기, 규격, 배송, 옵션)를 본다.
 - history: 어르신의 지난 구매를 본다.
 - cart_add: 어르신이 담아 달라거나 사겠다고 할 때만 상품을 장바구니에 담는다. 찾아 달라는 말에는 담지 말고 show 로 보여 준다. quantity 는 개수. options 는 어르신이 말한 옵션만 넣는다. 말하지 않은 옵션을 지어내지 않는다 — 빠지면 고를 수 있는 값이 결과로 온다.
@@ -40,7 +41,13 @@ fun systemPrompt(userName: String = DEMO_USER_NAME) = """
 
 ask·answer 의 문장은 그대로 소리로 읽힌다. 쉬운 말로 한두 문장, 기호나 상품 번호(p로 시작하는 id), 줄 번호(c로 시작하는 id)는 쓰지 않고, 가격은 "만 이천 원"처럼 읽는 말로 쓴다.
 없는 상품이나 가격, 효능을 지어내지 않는다.
-""".trimIndent()
+""".trimIndent() + storeFacts(catalog)
+
+/** 매장 대분류(16)와 상황 태그 이름. 짧게 한 줄씩 — 중분류까지 넣으면 지시문이 길어져 판단이 무너졌다(eval4) */
+private fun storeFacts(c: Catalog): String = buildString {
+    if (c.mains.isNotEmpty()) append("\n\n매장 대분류: " + c.mainNames.joinToString(", "))
+    if (c.needs.isNotEmpty()) append("\n상황 태그: " + c.needs.joinToString(", "))
+}
 
 /** 매 발화의 메시지: 앞 턴 이후 생긴 사실 + 지금 상태의 사실 + 어르신 말. 해석 규칙이 아니라 사실만 적는다 */
 fun turnMessage(s: ShopState, heard: String): String = buildString {

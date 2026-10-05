@@ -64,9 +64,12 @@ class ToolExecutor(private val api: ShopApi, private val userId: String = DEMO_U
 
     private suspend fun search(a: Action.Search, s: ShopState): Outcome {
         val filter = a.category?.let { s.catalog.filterOf(it) }
+        // 검색어가 상황 태그 이름과 정확히 같으면 그 태그가 붙은 상품으로 거른다. 낱말 일치로 찾으면 "간식"이
+        // 이름에 든 반려동물 간식이 걸렸다(PC 벤치 3번). 말뜻 해석이 아니라 어휘 일치다
+        val need = a.query.trim().takeIf { it in s.catalog.needs }
         val query = SearchQuery(
-            q = a.query, minPrice = a.minPrice, maxPrice = a.maxPrice, priceTier = a.priceTier,
-            sort = a.sort, gift = a.gift, audience = a.audience, main = filter?.first, mid = filter?.second,
+            q = if (need != null) "" else a.query, minPrice = a.minPrice, maxPrice = a.maxPrice, priceTier = a.priceTier,
+            sort = a.sort, gift = a.gift, audience = a.audience, main = filter?.first, mid = filter?.second, need = need,
             limit = SEARCH_LIMIT,
         )
         return when (val r = api.search(query)) {

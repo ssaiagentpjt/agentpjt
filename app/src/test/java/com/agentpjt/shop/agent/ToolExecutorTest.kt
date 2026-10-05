@@ -54,6 +54,15 @@ class ToolExecutorTest {
     }
 
     @Test
+    fun search_queryThatIsANeedName_filtersByThatNeed() = runTest {
+        val s = home.copy(catalog = TestData.catalog.copy(needs = listOf("간식", "끼니")))
+        exec.execute(Action.Search("간식"), s)
+        assertEquals("" to "간식", api.searches.last().let { it.q to it.need })
+        exec.execute(Action.Search("강아지 간식"), s) // 어휘와 정확히 같지 않으면 그대로 검색
+        assertEquals("강아지 간식" to null, api.searches.last().let { it.q to it.need })
+    }
+
+    @Test
     fun show_keepsEarlierListsForLaterReference() = runTest {
         var s = exec.execute(Action.Search("무릎"), home).state
         s = exec.execute(Action.Show(listOf("p07002"), "보호대"), s).state

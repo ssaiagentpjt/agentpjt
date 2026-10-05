@@ -79,6 +79,8 @@ class FakeShopApi : ShopApi {
 
     private val net = ApiResult.Network(java.io.IOException("offline"))
 
+    override suspend fun needs(): ApiResult<List<com.agentpjt.shop.api.NeedDto>> = ApiResult.Ok(emptyList())
+
     override suspend fun categories(): ApiResult<List<CategoryMainDto>> = if (offline) net else ApiResult.Ok(TestData.catalog.mains)
 
     override suspend fun search(query: SearchQuery): ApiResult<SearchDto> {

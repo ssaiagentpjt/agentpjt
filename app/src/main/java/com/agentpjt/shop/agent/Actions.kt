@@ -108,13 +108,16 @@ object Actions {
     fun observedCategories(s: ShopState): List<String> =
         s.candidates.flatMap { s.catalog.parentsOf(it.sub) }.distinct()
 
+    /** 검색을 좁힐 수 있는 분류: 대분류 16개(지시문에 이름이 있다) + 앞 결과에 나온 중분류 */
+    fun searchCategories(s: ShopState): List<String> = (s.catalog.mainNames + observedCategories(s)).distinct()
+
     private fun branches(k: Action.Kind, s: ShopState): List<JsonObject> = when (k) {
         Action.Kind.SEARCH -> listOf(obj(k, required = listOf("query", "budget", "sort", "gift")) {
             put("query", str())
             put("budget", nullable(str(max = 30)))
             put("sort", nullable(enumOf(SORTS)))
             put("gift", nullable(buildJsonObject { put("type", "boolean") }))
-            observedCategories(s).takeIf { it.isNotEmpty() }?.let { put("category", enumOf(it)) }
+            searchCategories(s).takeIf { it.isNotEmpty() }?.let { put("category", enumOf(it)) }
         })
         Action.Kind.INFO, Action.Kind.OPEN -> listOf(obj(k, required = listOf("productId")) { put("productId", enumOf(s.known.map { it.id })) })
         // 상품마다 가지를 나눠 옵션 값이 그 상품의 실제 값만 되게 한다. 옵션은 선택 사항 —
@@ -165,7 +168,7 @@ object Actions {
                 maxPrice = json.string("budget")?.let(::parseWon),
                 sort = json.string("sort")?.takeIf { it in SORTS },
                 gift = (json["gift"] as? JsonPrimitive)?.booleanOrNull,
-                category = json.string("category")?.takeIf { it in observedCategories(s) },
+                category = json.string("category")?.takeIf { it in searchCategories(s) },
             )
             Action.Kind.INFO -> knownId("productId")?.let { Action.Info(it) }
             Action.Kind.OPEN -> knownId("productId")?.let { Action.Open(it) }

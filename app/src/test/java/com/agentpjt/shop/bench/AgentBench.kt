@@ -53,9 +53,9 @@ class AgentBench {
     }
 
     /** 앱의 LiteRtDecider 와 같은 일을 다리에 시킨다. 단계마다 보낸 메시지·고른 행동·시간을 남긴다 */
-    private inner class BridgeDecider : Decider {
+    private inner class BridgeDecider(private val catalog: Catalog) : Decider {
         var tokens = 0
-        override suspend fun reset() { post("/reset", buildJsonObject { put("system", systemPrompt()) }) }
+        override suspend fun reset() { post("/reset", buildJsonObject { put("system", systemPrompt(catalog)) }) }
         override suspend fun next(message: String, schema: JsonObject): JsonObject {
             val r = post("/next", buildJsonObject { put("message", message); put("schema", schema) })
             val text = r["text"]!!.jsonPrimitive.content
@@ -76,8 +76,11 @@ class AgentBench {
             System.getenv("AGENT_BENCH_API") ?: props.getProperty("shop.apiBaseUrl", "https://shop-api.bomun.dev"),
             System.getenv("AGENT_BENCH_KEY") ?: props.getProperty("shop.apiKey"),
         )
-        val catalog = (api.categories() as? ApiResult.Ok)?.value?.let { Catalog(it) } ?: Catalog()
-        val decider = BridgeDecider()
+        val catalog = Catalog(
+            (api.categories() as? ApiResult.Ok)?.value.orEmpty(),
+            (api.needs() as? ApiResult.Ok)?.value.orEmpty().filter { it.productCount > 0 }.map { it.name },
+        )
+        val decider = BridgeDecider(catalog)
         val loop = AgentLoop(decider, ToolExecutor(api))
         val sessions = File(root, "app/eval/bench.txt").readLines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
 

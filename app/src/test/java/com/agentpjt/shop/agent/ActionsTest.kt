@@ -82,9 +82,12 @@ class ActionsTest {
     fun searchCategory_onlyFromCategoriesSeenInLatestResults() {
         fun searchProps(s: ShopState) = Actions.schema(s)["anyOf"]!!.jsonArray.map { it.jsonObject }
             .single { it.props()["action"]!!.jsonObject["const"]!!.jsonPrimitive.content == "search" }.props()
-        assertFalse("category" in searchProps(ShopState(catalog = TestData.catalog))) // 결과를 보기 전에는 없다
+        assertFalse("category" in searchProps(ShopState())) // 분류를 모르면 없다
+        // 결과를 보기 전: 대분류만(지시문에 이름이 있다)
+        assertEquals(listOf("식품·신선", "실버·보조용품"), searchProps(ShopState(catalog = TestData.catalog))["category"]!!.enumValues())
+        // 결과를 본 뒤: 대분류 + 결과에 나온 중분류
         val seen = ShopState(catalog = TestData.catalog, candidates = candidates) // compact() 의 sub 는 "보호대"
-        assertEquals(listOf("실버·보조용품", "보호대·지지대"), searchProps(seen)["category"]!!.enumValues())
+        assertEquals(listOf("식품·신선", "실버·보조용품", "보호대·지지대"), searchProps(seen)["category"]!!.enumValues())
         assertEquals("보호대·지지대", (Actions.parse(json("""{"action":"search","query":"무릎","category":"보호대·지지대"}"""), seen) as Action.Search).category)
         assertNull((Actions.parse(json("""{"action":"search","query":"김치","category":"반찬"}"""), seen) as Action.Search).category)
     }
