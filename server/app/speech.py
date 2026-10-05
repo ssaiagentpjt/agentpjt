@@ -32,3 +32,11 @@ def read_won(amount: int) -> str:
     if rest:
         parts.append(_read_four(rest))
     return (" ".join(parts) or "영") + " 원"
+
+
+_COUNTS = ["", "한", "두", "세", "네", "다섯", "여섯", "일곱", "여덟", "아홉"]
+
+
+def ko_count(n: int) -> str:
+    """개수를 세는 말. 1 -> "한", 2 -> "두". 10 이상은 숫자 그대로. 앱 KoreanSpeech.koCount 와 같다."""
+    return _COUNTS[n] if 1 <= n < len(_COUNTS) else str(n)

@@ -11,6 +11,8 @@
 
 import logging
 import os
+from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -19,12 +21,30 @@ from fastapi import Path as PathParam
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 
-from . import docs
-from .models import BatchOrderIn, BatchOrderOut, CategoryOut, HealthOut, OrderIn, OrderOut, ProductCompact, ProductOut, SearchOut
+from . import docs, order_docs, summary
+from .models import (
+    BatchOrderIn,
+    BatchOrderOut,
+    CancelIn,
+    CancelOut,
+    CategoryOut,
+    ConfirmIn,
+    ConfirmOut,
+    HealthOut,
+    OrderIn,
+    OrderOut,
+    PreparedItemOut,
+    PrepareOut,
+    ProductCompact,
+    ProductOut,
+    SearchOut,
+)
 from .search import Audience, Sort, Tier
-from .store import DEFAULT_DATA_DIR, STATIC_DIR, OrderError, Store
+from .speech import read_won
+from .store import DEFAULT_DATA_DIR, STATIC_DIR, OrderError, Store, now_kst
+from .summary import SpokenLine
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 View = Literal["compact", "full"]
 log = logging.getLogger("shop")
 
@@ -40,13 +60,14 @@ def create_app(
     db_path: str = "shop.db",
     api_key: str | None = None,
     public_base_url: str | None = None,
+    clock: Callable[[], datetime] = now_kst,
 ) -> FastAPI:
-    store = Store(data_dir, db_path)
+    store = Store(data_dir, db_path, clock)
     app = FastAPI(
         title="손주야 목업 상품 API",
         version=VERSION,
         summary=docs.SUMMARY,
-        description=docs.DESCRIPTION,
+        description=docs.DESCRIPTION + order_docs.FLOW,
         openapi_tags=docs.TAGS,
         swagger_ui_parameters=docs.SWAGGER_UI,
     )
@@ -163,6 +184,48 @@ def create_app(
                            quantity=i.quantity, options=i.options, totalPrice=total, orderedAt=at)
                   for i, (oid, name, total, at) in zip(body.items, placed, strict=True)]
         return BatchOrderOut(orders=orders, totalPrice=sum(o.totalPrice for o in orders))
+
+    @app.post("/orders/prepare", tags=["주문"], dependencies=auth, **{**order_docs.PREPARE, "responses": {
+        **docs.UNAUTHORIZED, **order_docs.PREPARE["responses"]}})
+    def prepare_order(body: BatchOrderIn) -> PrepareOut:
+        try:
+            token, expires, lines = store.prepare(body.userId, [(i.productId, i.quantity, i.options) for i in body.items])
+        except OrderError as e:
+            raise HTTPException(status_code=e.status, detail=e.detail) from e
+        items = [PreparedItemOut(productId=x.product_id, productName=x.name, options=x.options, quantity=x.quantity,
+                                 unitPrice=x.unit_price, shippingFee=x.shipping_fee, totalPrice=x.total) for x in lines]
+        total = sum(x.totalPrice for x in items)
+        spoken = [SpokenLine(x.name, x.options, x.quantity, x.delivery_days) for x in lines]
+        return PrepareOut(confirmToken=token, expiresAt=expires, items=items, totalPrice=total, totalSpoken=read_won(total),
+                          summaryText=summary.prepared(spoken, total, store.clock().date()))
+
+    @app.post("/orders/confirm", tags=["주문"], dependencies=auth, **{**order_docs.CONFIRM, "responses": {
+        **docs.UNAUTHORIZED, **order_docs.CONFIRM["responses"]}})
+    def confirm_order(body: ConfirmIn) -> ConfirmOut:
+        try:
+            rows, already = store.confirm(body.userId, body.confirmToken)
+        except OrderError as e:
+            raise HTTPException(status_code=e.status, detail=e.detail) from e
+        orders = [OrderOut(**r) for r in rows]
+        total = sum(o.totalPrice for o in orders)
+        days = store.delivery_days([o.productId for o in orders])
+        spoken = [SpokenLine(o.productName, o.options, o.quantity, days.get(o.productId, 1)) for o in orders]
+        # 도착일은 주문한 날 기준이다. 같은 토큰을 다음 날 다시 보내도 같은 요약이 나온다
+        text, when = summary.confirmed(spoken, total, datetime.fromisoformat(orders[0].orderedAt).date())
+        return ConfirmOut(orders=orders, totalPrice=total, alreadyConfirmed=already, arriveSpoken=when, summaryText=text)
+
+    @app.post("/orders/{order_id}/cancel", tags=["주문"], dependencies=auth, **{**order_docs.CANCEL, "responses": {
+        **docs.UNAUTHORIZED, **order_docs.CANCEL["responses"]}})
+    def cancel_order(
+        order_id: Annotated[str, PathParam(description="주문번호", examples=["M-20261005-5080"])],
+        body: CancelIn,
+    ) -> CancelOut:
+        try:
+            row = store.cancel(body.userId, order_id)
+        except OrderError as e:
+            raise HTTPException(status_code=e.status, detail=e.detail) from e
+        return CancelOut(order=OrderOut(**row), cancelledAt=row["cancelledAt"], refundPrice=row["totalPrice"],
+                         summaryText=summary.cancelled(row["productName"], row["totalPrice"]))
 
     @app.get("/users/{user_id}/orders", tags=["주문"], summary="구매 이력", dependencies=auth, responses=docs.UNAUTHORIZED)
     def orders(
