@@ -92,35 +92,6 @@ fun MicIcon(tint: Color, modifier: Modifier = Modifier) {
     }
 }
 
-/** 168dp 원형 마이크 버튼. 듣는 중에는 눌리지 않지만 색은 그대로 둔다. */
-@Composable
-fun MicButton(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
-    val c = ShopTheme.colors
-    Button(
-        onClick = onClick, enabled = enabled, shape = CircleShape,
-        modifier = modifier.size(168.dp).semantics { contentDescription = "누르고 말하기" },
-        colors = ButtonDefaults.buttonColors(
-            containerColor = c.voice, contentColor = c.voiceInk,
-            disabledContainerColor = c.voice, disabledContentColor = c.voiceInk,
-        ),
-    ) { MicIcon(c.voiceInk, Modifier.size(64.dp)) }
-}
-
-/** 추천·상세·확인 화면 아래의 "말로 하기" 버튼. 마이크 그림 + 글자. */
-@Composable
-fun SpeakButton(onClick: () -> Unit, enabled: Boolean) {
-    val c = ShopTheme.colors
-    OutlinedButton(
-        onClick = onClick, enabled = enabled,
-        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp),
-        shape = RoundedCornerShape(16.dp), border = BorderStroke(2.dp, c.voice),
-        colors = ButtonDefaults.outlinedButtonColors(contentColor = c.voice),
-    ) {
-        MicIcon(c.voice, Modifier.size(28.dp))
-        Text("  말로 하기", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
-    }
-}
-
 /** 지금 읽고 있다는 노란 띠. 막대 셋이 오르내린다. */
 @Composable
 fun ReadingBar(text: String, onStop: () -> Unit) {

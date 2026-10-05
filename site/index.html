@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>손주야 — 앱 내려받기</title>
+<meta name="description" content="어르신이 말로 장을 보는 앱, 손주야. 안드로이드 앱을 내려받으세요.">
+<meta name="theme-color" content="#1C46C9">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 108 108'%3E%3Crect width='108' height='108' rx='26' fill='%231C46C9'/%3E%3Cpath fill='%23fff' d='M34,34h40a8,8 0,0 1,8 8v22a8,8 0,0 1,-8 8h-20l-11,9v-9h-9a8,8 0,0 1,-8 -8v-22a8,8 0,0 1,8 -8z'/%3E%3C/svg%3E">
+<style>
+  /* 한 줄 배치: 로고·이름 → 내려받기 버튼 → 설치 3단계 → 안내. 색은 앱(ui/theme/Theme.kt)과 같다 */
+  :root {
+    --bg: #ffffff; --ink: #0f1a2e; --soft: #4a5568; --line: #cdd5e1; --paper: #eef1f6;
+    --brand: #1c46c9; --brand-ink: #ffffff; --warn: #fff3c4; --warn-ink: #2e2300;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0c121d; --ink: #ecf0f7; --soft: #a3afc2; --line: #2b374b; --paper: #151d2b; --warn: #3a3214; --warn-ink: #f3e3a0; color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: system-ui, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; line-height: 1.6; }
+  main { max-width: 480px; margin: 0 auto; padding: max(40px, env(safe-area-inset-top)) 20px max(40px, env(safe-area-inset-bottom)); display: grid; gap: 28px; }
+  header { display: grid; justify-items: center; gap: 6px; text-align: center; }
+  .logo { width: 96px; height: 96px; border-radius: 26px; background: var(--brand); display: grid; place-items: center; }
+  .logo svg { width: 96px; height: 96px; }
+  h1 { margin: 10px 0 0; font-size: 34px; letter-spacing: -0.02em; line-height: 1.2; }
+  .tag { margin: 0; color: var(--soft); font-size: 18px; }
+  .get { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 68px; border-radius: 18px; background: var(--brand); color: var(--brand-ink); font-size: 22px; font-weight: 800; text-decoration: none; }
+  .get:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+  .get svg { width: 26px; height: 26px; }
+  .meta { margin: -14px 0 0; text-align: center; color: var(--soft); font-size: 15px; font-variant-numeric: tabular-nums; min-height: 1.6em; }
+  h2 { margin: 0 0 10px; font-size: 19px; }
+  ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; counter-reset: s; }
+  ol li { counter-increment: s; display: grid; grid-template-columns: 34px 1fr; gap: 12px; align-items: start; font-size: 17px; }
+  ol li::before { content: counter(s); width: 34px; height: 34px; border-radius: 10px; background: var(--paper); border: 2px solid var(--line); display: grid; place-items: center; font-weight: 800; }
+  .note { background: var(--warn); color: var(--warn-ink); border-radius: 14px; padding: 14px 16px; font-size: 16px; }
+  .small { color: var(--soft); font-size: 14px; text-align: center; margin: 0; }
+  .small a { color: inherit; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="logo" aria-hidden="true">
+      <svg viewBox="0 0 108 108"><path fill="#fff" d="M34,34h40a8,8 0,0 1,8 8v22a8,8 0,0 1,-8 8h-20l-11,9v-9h-9a8,8 0,0 1,-8 -8v-22a8,8 0,0 1,8 -8z"/><path fill="#1C46C9" d="M39.5,53a4,4 0,1 0,8 0a4,4 0,1 0,-8 0zM50,53a4,4 0,1 0,8 0a4,4 0,1 0,-8 0zM60.5,53a4,4 0,1 0,8 0a4,4 0,1 0,-8 0z"/></svg>
+    </div>
+    <h1>손주야</h1>
+    <p class="tag">말로 하는 장보기</p>
+  </header>
+
+  <a class="get" id="get" href="https://github.com/ssaiagentpjt/agentpjt/releases/latest/download/sonjuya.apk">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>
+    앱 내려받기
+  </a>
+  <p class="meta" id="meta">안드로이드 7.0 이상</p>
+
+  <section>
+    <h2>설치하는 법</h2>
+    <ol>
+      <li>위 버튼을 눌러 파일을 내려받습니다.</li>
+      <li>내려받은 파일을 엽니다. "출처를 알 수 없는 앱" 안내가 나오면 설정에서 허용합니다.</li>
+      <li>설치를 마치고 손주야를 엽니다. 처음 한 번 AI 파일(2.6GB)을 받습니다. Wi-Fi 에서 해 주세요.</li>
+    </ol>
+  </section>
+
+  <p class="note">아이폰에서는 쓸 수 없어요. 공모전 시연용 앱이라 상품과 결제는 실제가 아닙니다.</p>
+
+  <p class="small"><a href="https://github.com/ssaiagentpjt/agentpjt">소스 코드</a></p>
+</main>
+<script>
+  // 최신 릴리스의 버전·크기·날짜. 못 읽으면 기본 문구를 그대로 둔다
+  fetch("https://api.github.com/repos/ssaiagentpjt/agentpjt/releases/latest")
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(rel => {
+      const apk = (rel.assets || []).find(a => a.name === "sonjuya.apk");
+      if (!apk) return;
+      const ver = rel.tag_name.replace(/^app-v/, "");
+      const mb = Math.round(apk.size / 1048576);
+      const d = new Date(rel.published_at);
+      document.getElementById("meta").textContent =
+        `버전 ${ver} · ${mb}MB · ${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()} · 안드로이드 7.0 이상`;
+    })
+    .catch(() => {});
+</script>
+</body>
+</html>

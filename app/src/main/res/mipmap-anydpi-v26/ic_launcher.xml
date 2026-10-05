@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/brand" />
+    <foreground android:drawable="@drawable/ic_logo_foreground" />
+    <!-- Android 13+ 테마 아이콘: 시스템이 말풍선 모양만 단색으로 칠한다 -->
+    <monochrome android:drawable="@drawable/ic_logo_foreground" />
+</adaptive-icon>

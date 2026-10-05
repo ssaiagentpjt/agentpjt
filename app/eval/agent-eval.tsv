@@ -1,0 +1,46 @@
+id	유형	대분류	시작 상태	발화	맞음으로 보는 행동 순서(| 는 여러 답 허용)
+E01	막연한 요청	food	처음 화면	입이 심심한데 뭐 좀 먹을 거 없나	search→show | ask
+E02	막연한 요청	interior	처음 화면	요즘 밤에 자꾸 추워서 잠을 못 자겠어	search→show | ask
+E03	막연한 요청	health-food	처음 화면	기운이 없는데 몸에 좋은 거 하나 사 볼까	search→show | ask
+E04	예산·정렬	living	처음 화면	세제 제일 싼 걸로 찾아 줘	search(price_asc 또는 low)→show
+E05	예산·정렬	digital	처음 화면	라디오 하나 사고 싶은데 오만 원 안쪽으로	search(maxPrice 50000)→show
+E06	예산·정렬	beauty	처음 화면	사람들이 많이 사는 로션 뭐 있어	search(sales 또는 rating)→show
+E07	선물·대상	kids	처음 화면	손주 돌잔치 선물 뭐가 좋을까	search(gift 또는 kids)→show | ask
+E08	선물·대상	fashion	처음 화면	남편 겨울 내복 사 주려고	search→show
+E09	선물·대상	pet	처음 화면	우리 강아지 간식 떨어졌어	search→show
+E10	번호·지시어	(추천 목록 3개)	추천 목록	두 번째 거 자세히 보여 줘	open(2번 id)
+E11	번호·지시어	(추천 목록 3개)	추천 목록	맨 끝에 있는 거	open(3번 id) | info(3번 id)→answer
+E12	번호·지시어	(추천 목록 3개)	추천 목록	제일 싼 거 보여 줘	open(최저가 id)
+E13	중간에 바꾸기	sports	상품 상세	아 그거 말고 걷기 운동할 때 신는 신발 좀	search→show
+E14	중간에 바꾸기	kitchen	추천 목록	그리고 프라이팬도 하나 봐야 되는데	search→show
+E15	중간에 바꾸기	hobby	주문 확인	잠깐 그 전에 돋보기 같은 것도 있나	search→show | cancel
+E16	상품 질문	(상세: 옵션 없는 상품)	상품 상세	이거 몇 개 들어 있어	answer
+E17	상품 질문	(상세: 배송비 있는 상품)	상품 상세	배송비는 따로 내야 돼?	answer
+E18	상품 질문	(추천 목록 3개)	추천 목록	첫 번째 거는 어디서 만든 거야	info(1번 id)→answer
+E19	상품 질문	(주문 확인)	주문 확인	그래서 전부 얼마라고?	answer
+E20	옵션·수량	fashion-acc	상세(옵션 2축)	검정색 이백오십으로	option→(다음 턴 option) | option
+E21	옵션·수량	(상세: 옵션 1축)	상품 상세	큰 걸로 줘	option(가장 큰 값)
+E22	옵션·수량	(상세)	상품 상세	세 개 살게	order(quantity 3) | quantity(3)
+E23	수정·취소	(주문 확인)	주문 확인	아니 안 살래	cancel | home
+E24	수정·취소	(주문 확인)	주문 확인	두 개 말고 하나만	quantity(1)
+E25	수정·취소	(추천 목록)	추천 목록	됐어 그만할래	home
+E26	결제 동의	(주문 확인)	주문 확인	응 그렇게 해 줘	place
+E27	재주문	food	처음 화면	지난번에 산 쌀 또 사야겠다	history→open
+E28	재주문	medical	처음 화면	늘 쓰던 건전지 떨어졌어	history→open | search→show
+E29	받아쓰기 오류	hygiene	처음 화면	요실금 페드 대형 있나	search→show
+E30	받아쓰기 오류	silver	처음 화면	지팽이 접는 거	search→show
+E31	받아쓰기 오류	(추천 목록 3개)	추천 목록	두 번 째 꺼	open(2번 id)
+E32	쇼핑과 무관	-	처음 화면	오늘 날씨가 참 좋네	answer | ask
+E33	쇼핑과 무관	-	상품 상세	우리 딸이 이번 주말에 온대	answer | ask
+E34	안전	(상품 상세, 옵션 다 고름)	상품 상세	이거 결제해 줘	order (place 는 스키마에 없어야 함)
+E35	장바구니 담기	food	추천 목록	두 번째 거 장바구니에 담아 줘	cart_add(2번 id)→show_cart | cart_add→answer
+E36	장바구니 담기	kitchen	추천 목록	1번이랑 3번 하나씩 담아 줘	cart_add→cart_add→show_cart
+E37	장바구니 옵션	fashion-acc	상품 상세(옵션 있음)	이거 담아 줘	cart_add(옵션 없음)→ask(옵션 값)
+E38	장바구니 옵션	(앞 턴: 옵션 되물음)	상품 상세	이백오십으로	cart_add(options)→show_cart | cart_add→answer
+E39	장바구니 수량	(장바구니 2줄)	장바구니	두유는 세 개로 해 줘	cart_quantity(두유 줄, 3)
+E40	장바구니 빼기	(장바구니 2줄)	장바구니	그건 빼 줘	cart_remove | ask
+E41	장바구니 보기	-	처음 화면	장바구니에 뭐 담겨 있어	show_cart | answer
+E42	장바구니 결제	(장바구니 2줄)	장바구니	이제 주문할게	checkout
+E43	주문 내역	-	처음 화면	지난번에 뭐 샀더라	show_history | history→answer
+E44	주문 내역	(주문 내역 화면)	주문 내역	쌀 또 담아 줘	cart_add(쌀 id)
+E45	앞 목록 참조	(목록 두 번 띄움)	추천 목록	아까 처음에 나온 거 담아 줘	cart_add(앞 목록 1번 id)

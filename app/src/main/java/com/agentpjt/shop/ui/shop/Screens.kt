@@ -5,171 +5,213 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.agentpjt.shop.shop.AiStatus
+import coil3.compose.AsyncImage
+import com.agentpjt.shop.shop.CartLine
+import com.agentpjt.shop.shop.ChatLink
+import com.agentpjt.shop.shop.ChatMsg
+import com.agentpjt.shop.shop.DEMO_USER_NAME
 import com.agentpjt.shop.shop.ITEM_PREFIX
-import com.agentpjt.shop.shop.Product
-import com.agentpjt.shop.shop.Scripts
+import com.agentpjt.shop.shop.PastOrder
+import com.agentpjt.shop.shop.ProductSummary
 import com.agentpjt.shop.shop.ShopState
 import com.agentpjt.shop.shop.formatWon
 import com.agentpjt.shop.shop.readWon
-import com.agentpjt.shop.shop.withObjectParticle
+import com.agentpjt.shop.shop.total
 import com.agentpjt.shop.ui.theme.ShopTheme
+import kotlinx.coroutines.delay
 
-/** 모든 화면의 바탕: 세로 스크롤(큰 글꼴 대비) + 좌우 20dp 여백. 아래 버튼은 [bottom] 에 둔다. */
+/** 모든 쇼핑 화면이 공통으로 쓰는 동작: 맨 위 버튼 줄의 이동과 글자로 쓰기 */
+data class Nav(
+    val home: () -> Unit,
+    val cart: () -> Unit,
+    val history: () -> Unit,
+    val devMenu: () -> Unit,
+    val help: () -> Unit,
+    val openTyping: () -> Unit,
+    val closeTyping: () -> Unit,
+    val sendTyped: (String) -> Unit,
+)
+
 @Composable
-private fun Page(bottom: (@Composable ColumnScope.() -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
-        Column(
-            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            content = content,
-        )
-        if (bottom != null) {
-            Column(Modifier.padding(bottom = 16.dp, top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = bottom)
+private fun Frame(s: ShopState, nav: Nav, dock: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) =
+    ShopFrame(s, nav, dock, content = content)
+
+@Composable
+private fun Title(text: String) {
+    Text(text, style = MaterialTheme.typography.headlineMedium, color = ShopTheme.colors.ink)
+}
+
+// 1. 처음 화면: 대화 기록 ---------------------------------------------------
+
+/** 손주야는 왼쪽, 어르신은 오른쪽 말풍선으로 위에서 아래로 쌓인다. 새 말이 오면 맨 아래로 내려간다 */
+@Composable
+fun HomeScreen(s: ShopState, nav: Nav, onMic: () -> Unit, onLink: (ChatLink) -> Unit) {
+    val c = ShopTheme.colors
+    val list = rememberLazyListState()
+    LaunchedEffect(s.log.size) { if (s.log.isNotEmpty()) list.animateScrollToItem(s.log.lastIndex) }
+    ShopFrame(s, nav, dock = { MicDock(s, onMic) }, scrollable = false) {
+        LazyColumn(
+            Modifier.fillMaxSize().minimalScrollbar(list, c.inkSoft),
+            state = list,
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            items(s.log, key = { it.id }) { m -> ChatBubble(m, enabled = !s.agentBusy, onLink = onLink) }
         }
     }
 }
 
 @Composable
-private fun Title(text: String, modifier: Modifier = Modifier) {
-    Text(text, modifier, style = MaterialTheme.typography.headlineMedium, color = ShopTheme.colors.ink)
-}
-
-// 1. 처음 화면 -------------------------------------------------------------
-
-@Composable
-fun HomeScreen(s: ShopState, onMic: () -> Unit, onExample: (String) -> Unit, onDevMenu: () -> Unit, onToggleThinking: () -> Unit) {
+private fun ChatBubble(m: ChatMsg, enabled: Boolean, onLink: (ChatLink) -> Unit) {
     val c = ShopTheme.colors
-    Page {
-        AiChip(s.ai, s.thinkingMode, onToggleThinking)
-        // 제목을 길게 누르면 개발자 메뉴(Gemma 테스트). 어르신이 우연히 누를 일은 드물다.
-        Title(
-            "안녕하세요\n무엇을 사 드릴까요?",
-            Modifier.padding(top = 8.dp).pointerInput(Unit) { detectTapGestures(onLongPress = { onDevMenu() }) },
-        )
-        Column(
-            Modifier.fillMaxWidth().padding(vertical = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            MicButton(onMic, enabled = s.ai == AiStatus.READY)
-            Text("누르고 말씀하세요", style = MaterialTheme.typography.titleLarge, color = c.ink)
+    when (m.from) {
+        ChatMsg.From.SYSTEM -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Text(m.text, Modifier.clip(RoundedCornerShape(50)).background(c.paper).padding(horizontal = 14.dp, vertical = 4.dp), fontSize = 14.sp, color = c.inkSoft)
         }
-        Text("이렇게 말해 보세요", fontSize = 16.sp, color = c.inkSoft)
-        // 누르면 그 문장을 말한 것처럼 에이전트에 넘긴다. 말이 서툰 분과 시연을 위한 길.
-        EXAMPLES.forEach { ExampleSay(it, enabled = s.ai == AiStatus.READY) { onExample(it) } }
-    }
-}
-
-private val EXAMPLES = listOf("무릎 아플 때 붙이는 거 2만 원 안쪽으로", "아침에 마실 거 찾아줘")
-
-/** AI 준비 상태. 길게 누르면 생각 모드를 켜고 끈다(실측 비교용). */
-@Composable
-private fun AiChip(ai: AiStatus, thinking: Boolean, onLongPress: () -> Unit) {
-    val c = ShopTheme.colors
-    val (text, dot) = when (ai) {
-        AiStatus.LOADING -> "AI 준비 중" to c.inkSoft
-        AiStatus.READY -> (if (thinking) "AI 준비됨 · 생각 모드" else "AI 준비됨") to c.ok
-        AiStatus.UNAVAILABLE -> "AI를 쓸 수 없어요 · 화면을 눌러 이용하세요" to c.speakInk
-    }
-    Row(
-        Modifier.clip(RoundedCornerShape(50)).background(if (ai == AiStatus.UNAVAILABLE) c.speak else c.voiceTint)
-            .pointerInput(Unit) { detectTapGestures(onLongPress = { onLongPress() }) }
-            .padding(horizontal = 14.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Box(Modifier.size(10.dp).clip(CircleShape).background(dot))
-        Text(text, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = if (ai == AiStatus.UNAVAILABLE) c.speakInk else c.ink)
-    }
-}
-
-@Composable
-private fun ExampleSay(text: String, enabled: Boolean, onClick: () -> Unit) {
-    val c = ShopTheme.colors
-    OutlinedButton(
-        onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp), border = BorderStroke(2.dp, c.line),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp, 14.dp),
-        colors = ButtonDefaults.outlinedButtonColors(contentColor = c.ink),
-    ) {
-        Text("“$text”", Modifier.fillMaxWidth(), fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
-    }
-}
-
-// 2. 말하기 ----------------------------------------------------------------
-
-@Composable
-fun ListeningScreen(s: ShopState, onDone: () -> Unit, onCancel: () -> Unit) {
-    val c = ShopTheme.colors
-    Page(bottom = {
-        BigButton("다 말했어요", onDone, enabled = !s.agentBusy)
-        BigButton("그만하기", onCancel, primary = false)
-    }) {
-        Column(
-            Modifier.fillMaxWidth().padding(top = 32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(28.dp),
-        ) {
-            Row(
-                Modifier.clip(RoundedCornerShape(50)).background(c.voiceTint).padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ChatMsg.From.USER -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+            val shape = RoundedCornerShape(topStart = 18.dp, topEnd = 6.dp, bottomEnd = 18.dp, bottomStart = 18.dp)
+            Column(
+                Modifier.fillMaxWidth(0.84f).wrapContentWidth(Alignment.End).clip(shape).background(c.surface).border(2.dp, c.line, shape)
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
             ) {
-                Box(Modifier.size(10.dp).clip(CircleShape).background(c.voice))
-                Text(if (s.agentBusy) "생각하고 있어요" else "듣고 있어요", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = c.ink)
+                Text(if (m.typed) "쓴 말" else "들은 말", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = c.inkSoft)
+                Text(m.text, fontSize = 19.sp, lineHeight = 27.sp, color = c.ink)
             }
-            Box(contentAlignment = Alignment.Center) {
-                Rings()
-                MicButton(onClick = {}, enabled = false)
-            }
-            Text(
-                s.heard.ifEmpty { " " }, Modifier.fillMaxWidth(),
-                fontSize = 26.sp, lineHeight = 36.sp, fontWeight = FontWeight.ExtraBold, color = c.ink, textAlign = TextAlign.Center,
-            )
         }
+        ChatMsg.From.AI -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+            val shape = RoundedCornerShape(topStart = 6.dp, topEnd = 18.dp, bottomEnd = 18.dp, bottomStart = 18.dp)
+            val fg = if (m.ask) c.speakInk else c.ink
+            Column(
+                Modifier.fillMaxWidth(0.84f).wrapContentWidth(Alignment.Start).clip(shape).background(if (m.ask) c.speak else c.voiceTint)
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+            ) {
+                Text("손주야", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (m.ask) c.speakInk else c.inkSoft)
+                Text(m.text, fontSize = 19.sp, lineHeight = 27.sp, fontWeight = FontWeight.Bold, color = fg)
+                m.link?.let { link ->
+                    Text(
+                        linkLabel(link) + " ›",
+                        Modifier.padding(top = 8.dp).clip(RoundedCornerShape(10.dp)).clickable(enabled = enabled, role = Role.Button) { onLink(link) }
+                            .padding(vertical = 6.dp),
+                        fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = c.voice,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun linkLabel(link: ChatLink) = when (link) {
+    is ChatLink.Results -> "${link.label} ${link.products.size}개 다시 보기"
+    is ChatLink.Product -> "${link.name} 다시 보기"
+    ChatLink.Cart -> "장바구니 보기"
+    ChatLink.History -> "주문 내역 보기"
+}
+
+// 2. 듣는 중 · 찾는 중 -------------------------------------------------------
+
+/** 말하는 동안에는 마이크와 쉼 막대, 판단하는 동안에는 손주야가 거친 단계를 보여 준다 */
+@Composable
+fun ListeningScreen(s: ShopState, nav: Nav, pauseUntil: Long, onDone: () -> Unit, onCancel: () -> Unit) {
+    val c = ShopTheme.colors
+    if (s.agentBusy) {
+        Frame(s, nav, dock = { BigButton("그만", onCancel, primary = false) }) {
+            Title("찾고 있어요")
+            s.steps.forEachIndexed { i, step ->
+                val now = i == s.steps.lastIndex
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(
+                        Modifier.size(32.dp).clip(CircleShape).background(if (now) c.voice else c.ok),
+                        contentAlignment = Alignment.Center,
+                    ) { Text(if (now) "…" else "✓", color = c.surface, fontSize = 17.sp, fontWeight = FontWeight.Black) }
+                    Text(if (now) step.doing else step.done, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = if (now) c.voice else c.ink)
+                }
+            }
+        }
+        return
+    }
+    Frame(s, nav, dock = {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            BigButton("다 말했어요", onDone, Modifier.weight(1f))
+            BigButton("그만", onCancel, Modifier.weight(1f), primary = false)
+        }
+    }) {
+        Box(Modifier.fillMaxWidth().padding(top = 36.dp, bottom = 12.dp), contentAlignment = Alignment.Center) {
+            Rings()
+            Box(Modifier.size(140.dp).clip(CircleShape).background(c.voice), contentAlignment = Alignment.Center) {
+                MicIcon(c.voiceInk, Modifier.size(60.dp))
+            }
+        }
+        Text("듣고 있어요", Modifier.fillMaxWidth(), fontSize = 22.sp, fontWeight = FontWeight.Black, color = c.ink, textAlign = TextAlign.Center)
+        Text(
+            "천천히 말씀하셔도 돼요.\n말이 멈추면 잠시 뒤 넘어가요.", Modifier.fillMaxWidth(),
+            fontSize = 18.sp, lineHeight = 26.sp, color = c.inkSoft, textAlign = TextAlign.Center,
+        )
+        PauseBar(pauseUntil)
+    }
+}
+
+/** 말이 멈춘 뒤 남은 시간. 다 줄면 듣기를 끝낸다(Listener 의 PAUSE_MS) */
+@Composable
+private fun PauseBar(pauseUntil: Long) {
+    val c = ShopTheme.colors
+    var left by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(pauseUntil) {
+        val total = (pauseUntil - System.currentTimeMillis()).coerceAtLeast(1)
+        while (pauseUntil > 0) {
+            left = ((pauseUntil - System.currentTimeMillis()).toFloat() / total).coerceIn(0f, 1f)
+            if (left <= 0f) break
+            delay(50)
+        }
+        if (pauseUntil == 0L) left = 0f
+    }
+    Box(Modifier.fillMaxWidth().height(12.dp).clip(RoundedCornerShape(50)).background(c.paper)) {
+        Box(Modifier.fillMaxHeight().fillMaxWidth(left).clip(RoundedCornerShape(50)).background(c.voice))
     }
 }
 
@@ -181,7 +223,7 @@ private fun Rings() {
     (0..2).forEach { i ->
         val p by t.animateFloat(0f, 1f, infiniteRepeatable(tween(1800, delayMillis = i * 600), RepeatMode.Restart), label = "ring$i")
         Box(
-            Modifier.size(168.dp).scale(1f + 0.7f * p).graphicsLayer { alpha = 0.55f * (1 - p) }
+            Modifier.size(140.dp).scale(1f + 0.6f * p).graphicsLayer { alpha = 0.5f * (1 - p) }
                 .border(3.dp, c.voice, CircleShape),
         )
     }
@@ -190,69 +232,104 @@ private fun Rings() {
 // 3. 추천 상품 --------------------------------------------------------------
 
 @Composable
-fun ResultsScreen(s: ShopState, speakingId: String?, onPick: (Int) -> Unit, onStopReading: () -> Unit, onMic: () -> Unit) {
-    val c = ShopTheme.colors
+fun ResultsScreen(
+    s: ShopState, nav: Nav, speakingId: String?, onPick: (Int) -> Unit, onAdd: (Int) -> Unit, onStopReading: () -> Unit, onMic: () -> Unit,
+) {
     val readingIndex = speakingId?.removePrefix(ITEM_PREFIX)?.toIntOrNull()?.takeIf { speakingId.startsWith(ITEM_PREFIX) }
-    Page(bottom = { SpeakButton(onMic, s.ai == AiStatus.READY) }) {
-        Title("${withObjectParticle(s.label)}\n${s.shown.size}개 골랐어요")
+    Frame(s, nav, dock = { MicDock(s, onMic) }) {
+        Title("${s.label} · ${s.shown.size}개")
         if (speakingId != null) {
             ReadingBar(if (readingIndex != null) "${readingIndex + 1}번째를 읽고 있어요" else "읽어 드리고 있어요", onStopReading)
         }
-        s.shown.forEachIndexed { i, p -> ProductCard(i, p, highlighted = i == readingIndex) { onPick(i) } }
-        Text(
-            "쿠팡 파트너스 활동의 일환으로 수수료를 받을 수 있습니다. (연동 시 표시 자리)",
-            fontSize = 13.sp, color = c.inkSoft,
-        )
+        s.shown.forEachIndexed { i, p ->
+            ProductCard(i, p, highlighted = i == readingIndex, inCart = s.cart.any { it.productId == p.id }, enabled = !s.agentBusy,
+                onOpen = { onPick(i) }, onAdd = { onAdd(i) })
+        }
+        Text("상품과 가격은 공모전 시연용 가상 데이터예요.", fontSize = 13.sp, color = ShopTheme.colors.inkSoft)
     }
 }
 
 @Composable
-private fun ProductCard(index: Int, p: Product, highlighted: Boolean, onClick: () -> Unit) {
+private fun ProductCard(index: Int, p: ProductSummary, highlighted: Boolean, inCart: Boolean, enabled: Boolean, onOpen: () -> Unit, onAdd: () -> Unit) {
     val c = ShopTheme.colors
     val shape = RoundedCornerShape(18.dp)
-    OutlinedButton(
-        onClick = onClick, modifier = Modifier.fillMaxWidth(), shape = shape,
-        border = BorderStroke(2.dp, if (highlighted) c.speakInk else c.line),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-        colors = ButtonDefaults.outlinedButtonColors(
-            containerColor = if (highlighted) c.speak.copy(alpha = 0.25f) else c.surface, contentColor = c.ink,
-        ),
+    Row(
+        Modifier.fillMaxWidth().clip(shape).background(if (highlighted) c.speak.copy(alpha = 0.25f) else c.surface)
+            .border(2.dp, if (highlighted) c.speakInk else c.line, shape)
+            .clickable(enabled = enabled, role = Role.Button, onClickLabel = "자세히", onClick = onOpen).padding(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             NumberBadge(index + 1)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(p.name, style = MaterialTheme.typography.titleMedium, color = c.ink)
-                Text(formatWon(p.price), fontSize = 28.sp, fontWeight = FontWeight.Black, color = c.ink)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (p.isRocket) Badge("로켓배송")
-                    if (p.isFreeShipping) Badge("무료배송")
-                    Badge("${p.arriveLabel} 도착", plain = true)
-                }
+            ProductImage(p.image, Modifier.size(52.dp))
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(p.name, style = MaterialTheme.typography.titleMedium, color = c.ink)
+            Text(formatWon(p.price), fontSize = 26.sp, fontWeight = FontWeight.Black, color = c.ink)
+            Text("${p.arriveSpoken} 도착 · 별점 ${p.rating}", fontSize = 16.sp, color = c.inkSoft)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                p.badges.take(2).forEach { Badge(it) }
+                if (p.options.isNotEmpty()) Badge("옵션 ${p.options.keys.joinToString("·")}", plain = true)
+            }
+            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ChipButton("자세히", onOpen, enabled = enabled)
+                ChipButton(if (inCart) "더 담기" else "담기", onAdd, enabled = enabled, accent = true)
             }
         }
+    }
+}
+
+/** 서버가 준 이미지(지금은 대분류 SVG 아이콘). 실패하면 빈 자리만 남는다 */
+@Composable
+private fun ProductImage(url: String, modifier: Modifier) {
+    val c = ShopTheme.colors
+    Box(modifier.clip(RoundedCornerShape(14.dp)).background(c.voiceTint), contentAlignment = Alignment.Center) {
+        if (url.isNotBlank()) AsyncImage(model = url, contentDescription = null, modifier = Modifier.fillMaxSize(0.8f))
     }
 }
 
 // 4. 상품 자세히 -------------------------------------------------------------
 
 @Composable
-fun DetailScreen(s: ShopState, onQty: (Int) -> Unit, onOrder: () -> Unit, onOthers: () -> Unit, onMic: () -> Unit) {
+fun DetailScreen(
+    s: ShopState, nav: Nav,
+    onQty: (Int) -> Unit, onOption: (String, String) -> Unit, onAdd: () -> Unit, onOthers: () -> Unit, onMic: () -> Unit,
+) {
     val c = ShopTheme.colors
     val p = s.current ?: return
-    Page(bottom = {
-        BigButton("주문하기", onOrder)
-        SpeakButton(onMic, s.ai == AiStatus.READY)
-        if (s.shown.isNotEmpty()) BigButton("다른 상품 보기", onOthers, primary = false)
+    Frame(s, nav, dock = {
+        BigButton(if (p.soldOut) "품절이에요" else "장바구니에 담기", onAdd, enabled = !p.soldOut && !s.agentBusy)
+        MicDock(s, onMic)
     }) {
-        Box(
-            Modifier.fillMaxWidth().aspectRatio(4f / 3f).clip(RoundedCornerShape(18.dp)).background(c.voiceTint),
-            contentAlignment = Alignment.Center,
-        ) { PatchPicture(Modifier.fillMaxWidth(0.46f).aspectRatio(4f / 3f)) }
+        ProductImage(p.image, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
         Title(p.name)
-        Text(formatWon(p.price), fontSize = 34.sp, fontWeight = FontWeight.Black, color = c.ink)
+        Text(formatWon(p.price), fontSize = 32.sp, fontWeight = FontWeight.Black, color = c.ink)
         Fact("배송비", if (p.shippingFee > 0) formatWon(p.shippingFee) else "없음")
         Fact("도착", p.arriveLabel)
+        Fact("규격", p.spec)
+        Text(p.description, fontSize = 19.sp, lineHeight = 28.sp, color = c.ink)
+        p.reviewSummary?.let { Text("“$it”", fontSize = 17.sp, lineHeight = 25.sp, color = c.inkSoft) }
+        p.options.forEach { axis ->
+            // 담으려는데 이 옵션이 빠졌으면 눈에 띄게 한다(음성으로도 같은 안내를 읽는다)
+            val missing = s.missingOption == axis.name
+            Text(
+                if (missing) "${axis.name}을(를) 골라 주세요" else axis.name,
+                Modifier.clip(RoundedCornerShape(8.dp)).background(if (missing) c.speak else c.surface).padding(horizontal = if (missing) 10.dp else 0.dp, vertical = 2.dp),
+                fontSize = 19.sp, fontWeight = FontWeight.Black, color = if (missing) c.speakInk else c.ink,
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                axis.values.forEach { v ->
+                    ChipButton(
+                        v.value + (if (v.priceAdd > 0) " (+${formatWon(v.priceAdd)})" else "") + if (v.soldOut) " 품절" else "",
+                        onClick = { onOption(axis.name, v.value) },
+                        selected = s.selected[axis.name] == v.value,
+                        enabled = !v.soldOut && !s.agentBusy,
+                    )
+                }
+            }
+        }
         QtyStepper(s.qty, onQty)
+        if (s.shown.isNotEmpty()) ChipButton("← 추천 목록으로", onOthers)
     }
 }
 
@@ -260,78 +337,147 @@ fun DetailScreen(s: ShopState, onQty: (Int) -> Unit, onOrder: () -> Unit, onOthe
 private fun Fact(label: String, value: String) {
     val c = ShopTheme.colors
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, fontSize = 19.sp, color = c.inkSoft)
+        Text(label, fontSize = 18.sp, color = c.inkSoft)
         Spacer(Modifier.size(12.dp))
-        Text(value, fontSize = 19.sp, fontWeight = FontWeight.ExtraBold, color = c.ink, textAlign = TextAlign.End)
+        Text(value, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = c.ink, textAlign = TextAlign.End)
     }
 }
 
-/** 상품 이미지 자리. 시안의 파스 그림(120×90)을 옮겼다. 실제 이미지는 데이터 연동 뒤. */
+// 5. 장바구니 ---------------------------------------------------------------
+
 @Composable
-private fun PatchPicture(modifier: Modifier) {
+fun CartScreen(s: ShopState, nav: Nav, onQty: (String, Int) -> Unit, onRemove: (String) -> Unit, onCheckout: () -> Unit, onMic: () -> Unit) {
     val c = ShopTheme.colors
-    Canvas(modifier) {
-        val u = size.width / 120f
-        drawRoundRect(c.surface, Offset(8 * u, 14 * u), Size(104 * u, 62 * u), CornerRadius(12 * u))
-        drawRoundRect(c.ink, Offset(8 * u, 14 * u), Size(104 * u, 62 * u), CornerRadius(12 * u), style = Stroke(3 * u))
-        drawRoundRect(c.voice, Offset(34 * u, 28 * u), Size(52 * u, 34 * u), CornerRadius(6 * u))
-        listOf(20f, 100f).forEach { x -> listOf(26f, 45f, 64f).forEach { y -> drawCircle(c.inkSoft, 2.5f * u, Offset(x * u, y * u)) } }
+    Frame(s, nav, dock = {
+        if (s.cart.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("합계", fontSize = 20.sp, fontWeight = FontWeight.Black, color = c.ink)
+                Text(formatWon(s.cart.total()), fontSize = 20.sp, fontWeight = FontWeight.Black, color = c.ink)
+            }
+            BigButton("주문하기", onCheckout, enabled = !s.agentBusy)
+        }
+        MicDock(s, onMic)
+    }) {
+        Title(if (s.cart.isEmpty()) "장바구니가 비어 있어요" else "장바구니 · ${s.cart.size}가지")
+        s.cart.forEachIndexed { i, l -> CartRow(i, l, problem = s.cartProblem == l.lineId, enabled = !s.agentBusy, onQty = onQty, onRemove = onRemove) }
     }
 }
 
-// 5. 주문 확인 --------------------------------------------------------------
+@Composable
+private fun CartRow(index: Int, l: CartLine, problem: Boolean, enabled: Boolean, onQty: (String, Int) -> Unit, onRemove: (String) -> Unit) {
+    val c = ShopTheme.colors
+    val shape = RoundedCornerShape(16.dp)
+    Row(
+        Modifier.fillMaxWidth().clip(shape).background(if (problem) c.speak.copy(alpha = 0.3f) else c.surface)
+            .border(2.dp, if (problem) c.speakInk else c.line, shape).padding(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        NumberBadge(index + 1)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(l.name, style = MaterialTheme.typography.titleMedium, color = c.ink)
+            if (l.options.isNotEmpty()) Text(l.options.values.joinToString(" "), fontSize = 16.sp, color = c.inkSoft)
+            if (problem) Text("지금 주문할 수 없어요. 빼거나 다른 걸로 바꿔 주세요.", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = c.speakInk)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    ChipButton("−", { onQty(l.lineId, -1) }, enabled = enabled && l.qty > 1)
+                    Text("${l.qty}", fontSize = 22.sp, fontWeight = FontWeight.Black, color = c.ink)
+                    ChipButton("+", { onQty(l.lineId, 1) }, enabled = enabled && l.qty < 9)
+                }
+                Text(formatWon(l.total), fontSize = 20.sp, fontWeight = FontWeight.Black, color = c.ink)
+            }
+            ChipButton("빼기", { onRemove(l.lineId) }, enabled = enabled)
+        }
+    }
+}
+
+// 6. 주문 확인 --------------------------------------------------------------
 
 @Composable
-fun ConfirmScreen(s: ShopState, onYes: () -> Unit, onNo: () -> Unit, onMic: () -> Unit) {
+fun ConfirmScreen(s: ShopState, nav: Nav, onYes: () -> Unit, onNo: () -> Unit, onMic: () -> Unit) {
     val c = ShopTheme.colors
-    val p = s.current ?: return
-    val total = Scripts.total(p, s.qty)
-    Page(bottom = {
+    if (s.cart.isEmpty()) return
+    val total = s.cart.total()
+    Frame(s, nav, dock = {
         // "아니요"도 같은 크기. 작은 취소 버튼은 잘못 누르기 쉽다.
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            BigButton("네, 주문", onYes, Modifier.weight(1f), minHeight = 76.dp)
+            BigButton("네, 주문", onYes, Modifier.weight(1f), minHeight = 76.dp, enabled = !s.agentBusy)
             BigButton("아니요", onNo, Modifier.weight(1f), primary = false, minHeight = 76.dp)
         }
-        SpeakButton(onMic, s.ai == AiStatus.READY)
+        MicDock(s, onMic)
     }) {
         Title("이대로 주문할까요?")
-        Fact("상품", "${p.name} · ${s.qty}개")
-        Fact("받는 곳", "서울 노원구 상계로 77\n홍길순 님")
+        s.cart.forEach { l ->
+            Fact(l.name + (if (l.options.isEmpty()) "" else " " + l.options.values.joinToString(" ")) + " × ${l.qty}", formatWon(l.total))
+        }
+        Fact("받는 곳", "서울 노원구 상계로 77\n$DEMO_USER_NAME 님")
         Fact("결제", "국민카드 ****1234")
         Column(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.ink).padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Text("배송비 포함 결제 금액", fontSize = 17.sp, color = c.surface.copy(alpha = 0.85f))
-            Text(formatWon(total), fontSize = 40.sp, lineHeight = 46.sp, fontWeight = FontWeight.Black, color = c.surface)
+            Text(formatWon(total), fontSize = 38.sp, lineHeight = 44.sp, fontWeight = FontWeight.Black, color = c.surface)
             Text(readWon(total), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = c.speak)
         }
     }
 }
 
-// 6. 주문 완료 --------------------------------------------------------------
+// 7. 주문 완료 --------------------------------------------------------------
 
 @Composable
-fun DoneScreen(s: ShopState, onHome: () -> Unit) {
+fun DoneScreen(s: ShopState, nav: Nav, onMic: () -> Unit) {
     val c = ShopTheme.colors
-    Page(bottom = { BigButton("처음으로", onHome) }) {
+    Frame(s, nav, dock = { MicDock(s, onMic, label = "더 살 것 말하기") }) {
         Column(
-            Modifier.fillMaxWidth().padding(top = 96.dp),
+            Modifier.fillMaxWidth().padding(top = 48.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Box(Modifier.size(120.dp).clip(CircleShape).background(c.ok), contentAlignment = Alignment.Center) {
-                Canvas(Modifier.size(60.dp)) {
+            Box(Modifier.size(112.dp).clip(CircleShape).background(c.ok), contentAlignment = Alignment.Center) {
+                Canvas(Modifier.size(56.dp)) {
                     val u = size.width / 24f
                     val path = Path().apply { moveTo(5 * u, 12.5f * u); lineTo(9.5f * u, 17 * u); lineTo(19 * u, 7.5f * u) }
                     drawPath(path, c.surface, style = Stroke(3 * u, cap = StrokeCap.Round, join = StrokeJoin.Round))
                 }
             }
             Title("주문했어요")
-            Text(
-                "${s.current?.arriveLabel}에 도착해요\n가족께 알렸어요",
-                fontSize = 19.sp, lineHeight = 28.sp, color = c.inkSoft, textAlign = TextAlign.Center,
-            )
+            s.orderTotal?.let { Text("${s.orderIds.size}가지 · ${formatWon(it)}", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = c.ink) }
+            Text("차례로 도착해요. 가족께 알렸어요.", fontSize = 18.sp, color = c.inkSoft, textAlign = TextAlign.Center)
+            if (s.orderIds.isNotEmpty()) Text("주문번호 ${s.orderIds.first()}" + if (s.orderIds.size > 1) " 외" else "", fontSize = 16.sp, color = c.inkSoft)
         }
     }
+}
+
+// 8. 주문 내역 --------------------------------------------------------------
+
+@Composable
+fun HistoryScreen(s: ShopState, nav: Nav, onReorder: (PastOrder) -> Unit, onMic: () -> Unit) {
+    val c = ShopTheme.colors
+    Frame(s, nav, dock = { MicDock(s, onMic) }) {
+        Title(if (s.pastOrders.isEmpty()) "주문하신 것이 없어요" else "주문 내역")
+        var lastDate = ""
+        s.pastOrders.forEach { o ->
+            if (o.date != lastDate) {
+                Text(koDate(o.date), fontSize = 17.sp, fontWeight = FontWeight.Black, color = c.inkSoft)
+                lastDate = o.date
+            }
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).border(2.dp, c.line, RoundedCornerShape(16.dp)).padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(o.name, style = MaterialTheme.typography.titleMedium, color = c.ink)
+                Text("${o.qty}개" + if (o.options.isEmpty()) "" else " · " + o.options.values.joinToString(" "), fontSize = 16.sp, color = c.inkSoft)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text(formatWon(o.total), fontSize = 19.sp, fontWeight = FontWeight.Black, color = c.ink)
+                    ChipButton("또 담기", { onReorder(o) }, enabled = !s.agentBusy, accent = true)
+                }
+            }
+        }
+    }
+}
+
+/** "2026-09-12" → "9월 12일" */
+private fun koDate(iso: String): String {
+    val parts = iso.split("-")
+    return if (parts.size == 3) "${parts[1].toInt()}월 ${parts[2].toInt()}일" else iso
 }

@@ -1,119 +1,204 @@
 package com.agentpjt.shop.agent
 
-import com.agentpjt.shop.shop.Catalog
-import com.agentpjt.shop.shop.Product
+import com.agentpjt.shop.api.ApiResult
+import com.agentpjt.shop.api.BatchOrderInDto
+import com.agentpjt.shop.api.OrderItemDto
+import com.agentpjt.shop.api.SearchQuery
+import com.agentpjt.shop.api.ShopApi
+import com.agentpjt.shop.shop.CartLine
+import com.agentpjt.shop.shop.DEMO_USER_ID
+import com.agentpjt.shop.shop.KnownProduct
+import com.agentpjt.shop.shop.PastOrder
 import com.agentpjt.shop.shop.Screen
 import com.agentpjt.shop.shop.ShopState
-import com.agentpjt.shop.shop.formatWon
-import com.agentpjt.shop.shop.readWon
+import com.agentpjt.shop.shop.ShownList
+import com.agentpjt.shop.shop.MAX_LISTS
+import com.agentpjt.shop.shop.known
+import com.agentpjt.shop.shop.nextLineId
+import com.agentpjt.shop.shop.toDetail
+import com.agentpjt.shop.shop.toSummary
+import com.agentpjt.shop.shop.withObjectParticle
 
 /**
- * 모델이 부른 도구를 실행한다. 순수 함수 — 상태를 받아 새 상태와 모델에 돌려줄 결과를 낸다.
- * 여기서 하는 검사는 확실한 것뿐이다: id 존재, 숫자 범위, 화면 상태. 사용자 말은 보지 않는다.
+ * 행동을 실행한다. 서버(ShopApi)를 부르고, 상태를 받아 새 상태와 결과를 낸다.
+ * 여기서 하는 검사는 확실한 것뿐이다: 화면 상태, id·옵션 값 존재, 숫자 범위, 서버 응답. 사용자 말은 보지 않는다.
+ * 터치 동작도 같은 실행기를 거친다(ShopViewModel) — 결제 경로가 하나라서 안전 검사도 한 곳에 있다.
+ * 장바구니 파일 저장은 여기서 하지 않는다(ShopViewModel 이 상태의 cart 가 바뀔 때 저장한다).
  */
-class ToolExecutor(private val catalog: Catalog) {
+class ToolExecutor(private val api: ShopApi, private val userId: String = DEMO_USER_ID) {
 
     data class Outcome(
         val state: ShopState,
-        /** 모델에게 돌려줄 결과. LiteRT-LM 이 JSON 으로 바꿔 넘긴다. */
-        val response: Map<String, Any?>,
-        /** 화면이 바뀌었으면 그 화면 대본이 읽기를 맡는다. */
-        val navigated: Boolean,
+        val ok: Boolean,
+        /** 관찰 행동이면 모델에게 돌려줄 결과 평문(ToolResults), 실패면 그 사유 */
+        val result: String,
+        /** 옵션을 골라야 해서 실패했을 때 고를 수 있는 값 */
+        val choices: Map<String, List<String>> = emptyMap(),
+        /** 서버에 닿지 못했다 */
+        val offline: Boolean = false,
     )
 
-    fun execute(name: String, args: Map<String, Any?>, s: ShopState): Outcome {
-        // 도구 이름은 런타임 설정에 따라 camelCase 또는 snake_case 로 온다
-        return when (name.replace("_", "").lowercase()) {
-            "getproducts" -> getProducts(args, s)
-            "showproducts" -> showProducts(args, s)
-            "openproduct" -> openProduct(args, s)
-            "setquantity" -> setQuantity(args, s)
-            "requestorder" -> requestOrder(args, s)
-            "placeorder" -> placeOrder(s)
-            "gohome" -> Outcome(ShopState(ai = s.ai, thinkingMode = s.thinkingMode), ok("처음 화면으로 갔다"), navigated = true)
-            else -> error(s, "없는 도구: $name")
+    suspend fun execute(action: Action, s: ShopState): Outcome = when (action) {
+        is Action.Search -> search(action, s)
+        is Action.Info -> info(action.productId, s)
+        Action.History -> history(s)
+        is Action.CartAdd -> cartAdd(action, s)
+        is Action.CartRemove -> cartRemove(action.lineId, s)
+        is Action.CartQuantity -> cartQuantity(action, s)
+        is Action.Show -> show(action, s)
+        is Action.Open -> open(action.productId, s)
+        Action.ShowCart -> ok(s.copy(screen = Screen.Cart), "장바구니 화면을 열었다")
+        Action.ShowHistory -> showHistory(s)
+        Action.Checkout -> checkout(s)
+        Action.Place -> place(s)
+        Action.Cancel -> cancel(s)
+        Action.Home -> ok(s.freshSession(), "처음 화면으로 갔다")
+        // 말하기는 상태를 바꾸지 않는다. 화면이 문장을 그린다
+        is Action.Ask, is Action.Answer -> ok(s, "")
+    }
+
+    private suspend fun search(a: Action.Search, s: ShopState): Outcome {
+        val query = SearchQuery(
+            q = a.query, minPrice = a.minPrice, maxPrice = a.maxPrice, priceTier = a.priceTier,
+            sort = a.sort, gift = a.gift, audience = a.audience,
+        )
+        return when (val r = api.search(query)) {
+            is ApiResult.Ok -> {
+                val items = r.value.products.map { it.toSummary() }
+                ok(s.copy(candidates = items, offline = false).remember(items.map { it.known() }), ToolResults.search(a.query, r.value.total, items))
+            }
+            else -> apiFail(s, r)
         }
     }
 
-    private fun getProducts(args: Map<String, Any?>, s: ShopState): Outcome {
-        val category = args.str("category") ?: return error(s, "category 가 필요하다")
-        if (category !in catalog.categories()) {
-            return error(s, "없는 카테고리: $category. 가능한 카테고리: ${catalog.categories().joinToString()}")
+    private fun show(a: Action.Show, s: ShopState): Outcome {
+        val pool = (s.candidates + s.shown).associateBy { it.id }
+        val ids = a.ids.distinct().take(3)
+        val products = ids.mapNotNull { pool[it] }
+        if (products.isEmpty() || products.size != ids.size) return fail(s, "최근 검색 결과에 없는 상품이다")
+        val label = a.label.ifBlank { "추천 상품" }
+        val lists = (listOf(ShownList(label, products.map { it.known() })) + s.lists).take(MAX_LISTS)
+        return ok(s.copy(screen = Screen.Results, shown = products, label = label, lists = lists), "추천 화면에 ${products.size}개를 띄웠다")
+    }
+
+    private suspend fun info(id: String, s: ShopState): Outcome = when (val r = api.product(id)) {
+        is ApiResult.Ok -> {
+            val d = r.value.toDetail()
+            ok(s.copy(offline = false).remember(listOf(d.known())), ToolResults.detail(d))
         }
-        val maxPrice = args.int("maxPrice")
-        val items = catalog.products(category, maxPrice).map { it.toToolJson() }
-        return Outcome(s, mapOf("category" to category, "maxPrice" to maxPrice, "products" to items), navigated = false)
+        else -> apiFail(s, r)
     }
 
-    private fun showProducts(args: Map<String, Any?>, s: ShopState): Outcome {
-        val ids = args.strList("productIds")
-        if (ids.isEmpty()) return error(s, "productIds 가 비었다")
-        val unknown = ids.filter { catalog.byId(it) == null }
-        if (unknown.isNotEmpty()) return error(s, "없는 상품 id: ${unknown.joinToString()}. getProducts 결과의 id 를 써라")
-        val products = ids.distinct().take(3).mapNotNull { catalog.byId(it) }
-        val label = args.str("label")?.takeIf { it.isNotBlank() } ?: "추천 상품"
-        val next = s.copy(screen = Screen.Results, shown = products, label = label)
-        return Outcome(next, ok("추천 화면에 ${products.size}개를 띄웠다: " + products.mapIndexed { i, p -> "${i + 1}) ${p.id}" }.joinToString()), navigated = true)
-    }
-
-    private fun openProduct(args: Map<String, Any?>, s: ShopState): Outcome {
-        val p = args.str("productId")?.let(catalog::byId) ?: return error(s, "없는 상품 id: ${args["productId"]}")
-        return Outcome(s.copy(screen = Screen.Detail, current = p, qty = 1), ok("${p.id} 상세 화면을 열었다"), navigated = true)
-    }
-
-    private fun setQuantity(args: Map<String, Any?>, s: ShopState): Outcome {
-        val count = args.int("count") ?: return error(s, "count 가 필요하다")
-        if (count !in 1..9) return error(s, "수량은 1에서 9 사이다")
-        if (s.current == null || s.screen !in setOf(Screen.Detail, Screen.Confirm, Screen.Listening)) {
-            return error(s, "보고 있는 상품이 없다. 먼저 openProduct 를 써라")
+    private suspend fun open(id: String, s: ShopState): Outcome = when (val r = api.product(id)) {
+        is ApiResult.Ok -> {
+            val d = r.value.toDetail()
+            ok(
+                s.copy(screen = Screen.Detail, current = d, selected = emptyMap(), qty = 1, offline = false).remember(listOf(d.known())),
+                "${d.name} 상세 화면을 열었다",
+            )
         }
-        return Outcome(s.copy(qty = count), ok("수량을 ${count}개로 바꿨다"), navigated = false)
+        else -> apiFail(s, r)
     }
 
-    private fun requestOrder(args: Map<String, Any?>, s: ShopState): Outcome {
-        val p = args.str("productId")?.let(catalog::byId) ?: return error(s, "없는 상품 id: ${args["productId"]}")
-        val qty = args.int("quantity") ?: 1
-        if (qty !in 1..9) return error(s, "수량은 1에서 9 사이다")
-        return Outcome(s.copy(screen = Screen.Confirm, current = p, qty = qty), ok("주문 확인 화면을 열었다. 사용자의 동의를 기다린다"), navigated = true)
+    /** 담기. 가격·추가 금액·배송비를 서버 상세에서 받아 줄을 만든다. 옵션이 빠졌으면 담지 않고 고를 수 있는 값을 돌려준다 */
+    private suspend fun cartAdd(a: Action.CartAdd, s: ShopState): Outcome {
+        val d = when (val r = api.product(a.productId)) {
+            is ApiResult.Ok -> r.value.toDetail()
+            else -> return apiFail(s, r)
+        }
+        val base = s.copy(offline = false).remember(listOf(d.known())) // 축을 알게 됐으니 다음 담기 스키마에 값이 생긴다
+        if (d.soldOut) return fail(base, "${d.name}는 품절이라 담을 수 없다")
+        val unknownAxis = a.options.keys.filter { axis -> d.options.none { it.name == axis } }
+        if (unknownAxis.isNotEmpty()) return fail(base, "${d.name}에는 ${unknownAxis.joinToString()} 옵션이 없다", d.options.associate { it.name to it.available })
+        for (axis in d.options) {
+            val wanted = a.options[axis.name] ?: continue
+            val v = axis.values.firstOrNull { it.value == wanted } ?: return fail(base, "${axis.name}에 ${wanted}는 없다", mapOf(axis.name to axis.available))
+            if (v.soldOut) return fail(base, "${axis.name} ${v.value}는 품절이다", mapOf(axis.name to axis.available))
+        }
+        val missing = d.missing(a.options)
+        if (missing.isNotEmpty()) {
+            val (axis, values) = missing.entries.first()
+            return fail(base, "${d.name}는 ${withObjectParticle(axis)} 골라야 담을 수 있다. 고를 수 있는 값: ${values.joinToString(", ")}", missing)
+        }
+        val qty = a.quantity ?: 1
+        val same = s.cart.firstOrNull { it.productId == d.id && it.options == a.options }
+        val cart = if (same != null) {
+            s.cart.map { if (it === same) it.copy(qty = (it.qty + qty).coerceAtMost(9)) else it }
+        } else {
+            val add = d.options.sumOf { axis -> axis.values.firstOrNull { it.value == a.options[axis.name] }?.priceAdd ?: 0 }
+            s.cart + CartLine(s.cart.nextLineId(), d.id, d.name, d.price, add, a.options, qty.coerceIn(1, 9), d.shippingFee, d.image)
+        }
+        val line = cart.first { it.productId == d.id && it.options == a.options }
+        return ok(base.copy(cart = cart, cartProblem = null), "(앱) 담았다: ${ToolResults.line(line)}. ${ToolResults.cart(cart)}")
     }
 
-    // 주문 안전은 말 해석이 아니라 상태로 지킨다: 확인 화면(대본으로 금액을 읽어 준 뒤)에서만 확정된다.
-    private fun placeOrder(s: ShopState): Outcome {
-        val onConfirm = s.screen == Screen.Confirm || (s.screen == Screen.Listening && s.returnTo == Screen.Confirm)
-        if (!onConfirm || s.current == null) return error(s, "주문 확인 화면이 아니다. 먼저 requestOrder 를 써라")
-        val id = "M-20261003-" + (1000..9999).random()
-        return Outcome(s.copy(screen = Screen.Done, orderId = id), ok("주문을 확정했다. 주문번호 $id"), navigated = true)
+    private fun cartRemove(lineId: String, s: ShopState): Outcome {
+        val line = s.cart.firstOrNull { it.lineId == lineId } ?: return fail(s, "장바구니에 없는 줄이다")
+        val cart = s.cart - line
+        return ok(s.copy(cart = cart, cartProblem = s.cartProblem.takeIf { it != lineId }), "(앱) 뺐다: ${line.name}. ${ToolResults.cart(cart)}")
     }
 
-    private fun ok(message: String) = mapOf("ok" to true, "message" to message)
-    private fun error(s: ShopState, message: String) = Outcome(s, mapOf("ok" to false, "error" to message), navigated = false)
-}
+    private fun cartQuantity(a: Action.CartQuantity, s: ShopState): Outcome {
+        if (a.count !in 1..9) return fail(s, "수량은 1에서 9 사이다")
+        if (s.cart.none { it.lineId == a.lineId }) return fail(s, "장바구니에 없는 줄이다")
+        val cart = s.cart.map { if (it.lineId == a.lineId) it.copy(qty = a.count) else it }
+        return ok(s.copy(cart = cart), "(앱) 수량을 바꿨다. ${ToolResults.cart(cart)}")
+    }
 
-/** 모델에게 보여 주는 상품. 가격은 읽는 말도 같이 줘서 모델이 숫자를 직접 읽지 않게 한다. */
-internal fun Product.toToolJson(): Map<String, Any?> = mapOf(
-    "id" to id,
-    "name" to name,
-    "price" to formatWon(price),
-    "priceSpoken" to readWon(price),
-    "shipping" to if (shippingFee > 0) formatWon(shippingFee) else "무료",
-    "arrive" to arriveLabel,
-    "rocket" to isRocket,
-)
+    private fun checkout(s: ShopState): Outcome {
+        if (s.cart.isEmpty()) return fail(s, "장바구니가 비었다")
+        return ok(s.copy(screen = Screen.Confirm, cartProblem = null), "주문 확인 화면을 열었다")
+    }
 
-// 인자 키는 런타임 설정에 따라 camelCase 또는 snake_case 로 온다. 숫자는 JSON 을 거쳐 Double/Long 으로 올 수 있다.
-private fun Map<String, Any?>.raw(key: String): Any? =
-    this[key] ?: this[key.replace(Regex("([A-Z])")) { "_" + it.value.lowercase() }]
+    // 결제 안전은 말 해석이 아니라 상태로 지킨다: 주문 확인 화면(대본으로 금액을 읽어 준 뒤)에서만 확정된다.
+    private suspend fun place(s: ShopState): Outcome {
+        if (s.effectiveScreen != Screen.Confirm || s.cart.isEmpty()) return fail(s, "주문 확인 화면이 아니다")
+        val items = s.cart.map { OrderItemDto(it.productId, it.qty, it.options) }
+        return when (val r = api.placeBatch(BatchOrderInDto(userId, items))) {
+            is ApiResult.Ok -> ok(
+                s.copy(screen = Screen.Done, cart = emptyList(), orderIds = r.value.orders.map { it.orderId }, orderTotal = r.value.totalPrice, offline = false),
+                "주문을 확정했다",
+            )
+            is ApiResult.Http -> {
+                // 한 줄이라도 안 되면 서버는 아무것도 주문하지 않는다. 그 줄을 짚어 장바구니로 돌아간다
+                val problem = r.order?.index?.let { s.cart.getOrNull(it) }
+                fail(s.copy(screen = Screen.Cart, cartProblem = problem?.lineId), (problem?.name?.let { "$it: " } ?: "") + r.message, r.order?.choices.orEmpty())
+            }
+            is ApiResult.Network -> apiFail(s, r)
+        }
+    }
 
-private fun Map<String, Any?>.str(key: String): String? = raw(key)?.toString()?.trim()
+    private fun cancel(s: ShopState): Outcome {
+        if (s.effectiveScreen != Screen.Confirm) return fail(s, "주문 확인 화면이 아니다")
+        return ok(s.copy(screen = Screen.Cart), "주문을 멈추고 장바구니로 돌아갔다")
+    }
 
-private fun Map<String, Any?>.int(key: String): Int? = when (val v = raw(key)) {
-    is Number -> v.toInt()
-    is String -> v.trim().toDoubleOrNull()?.toInt()
-    else -> null
-}
+    private suspend fun history(s: ShopState): Outcome = when (val r = api.orders(userId, 10)) {
+        is ApiResult.Ok -> ok(s.copy(offline = false).remember(r.value.distinctBy { it.productId }.map { KnownProduct(it.productId, it.productName) }),
+            ToolResults.history(r.value))
+        else -> apiFail(s, r)
+    }
 
-private fun Map<String, Any?>.strList(key: String): List<String> = when (val v = raw(key)) {
-    is List<*> -> v.mapNotNull { it?.toString()?.trim() }.filter { it.isNotEmpty() }
-    is String -> v.split(',').map { it.trim() }.filter { it.isNotEmpty() }
-    else -> emptyList()
+    private suspend fun showHistory(s: ShopState): Outcome = when (val r = api.orders(userId, 10)) {
+        is ApiResult.Ok -> {
+            val past = r.value.map { PastOrder(it.orderedAt.take(10), it.productId, it.productName, it.quantity, it.options, it.totalPrice) }
+            ok(
+                s.copy(screen = Screen.History, pastOrders = past, offline = false)
+                    .remember(r.value.distinctBy { it.productId }.map { KnownProduct(it.productId, it.productName) }),
+                "주문 내역 화면을 열었다",
+            )
+        }
+        else -> apiFail(s, r)
+    }
+
+    private fun ok(s: ShopState, result: String) = Outcome(s, ok = true, result = result)
+
+    private fun fail(s: ShopState, message: String, choices: Map<String, List<String>> = emptyMap()) =
+        Outcome(s, ok = false, result = "(앱) 실패: $message", choices = choices)
+
+    private fun apiFail(s: ShopState, r: ApiResult<*>): Outcome = when (r) {
+        is ApiResult.Network -> Outcome(s.copy(offline = true), ok = false, result = "(앱) 실패: 서버에 연결하지 못했다", offline = true)
+        is ApiResult.Http -> fail(s, if (r.code == 404) "없는 상품이다" else "서버 오류 ${r.code}: ${r.message}", r.order?.choices.orEmpty())
+        is ApiResult.Ok -> error("성공 결과는 여기로 오지 않는다")
+    }
 }
