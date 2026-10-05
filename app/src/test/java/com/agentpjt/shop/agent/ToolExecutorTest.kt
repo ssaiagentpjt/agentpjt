@@ -37,7 +37,20 @@ class ToolExecutorTest {
         assertEquals(listOf("p07002", "p03005"), out.state.candidates.map { it.id })
         assertEquals(listOf("M", "L", "XL"), out.state.known.first().options["사이즈"])
         assertEquals(20000, api.searches.single().maxPrice)
-        assertTrue(out.result, out.result.contains("p07002 무릎 보호대 2개입 · 만 육천구백 원"))
+        assertTrue(out.result, out.result.contains("p07002 무릎 보호대 2개입 · 보호대 · 만 육천구백 원"))
+    }
+
+    @Test
+    fun search_category_isSentAsServerIds_andResultsCarryCategoryPath() = runTest {
+        val s = home.copy(catalog = TestData.catalog)
+        val out = exec.execute(Action.Search("김치", category = "반찬"), s) // 실행기는 받은 분류를 그대로 보낸다(고를 수 있는 범위는 Actions 가 묶는다)
+        val q = api.searches.single()
+        assertEquals("food" to "side-dish", q.main to q.mid)
+        assertEquals(8, q.limit)
+        assertTrue(out.result, out.result.startsWith("(앱) '김치 · 분류 반찬' 검색 결과"))
+        assertTrue(out.result, out.result.contains("p07002 무릎 보호대 2개입 · 실버·보조용품 > 보호대·지지대 > 보호대 ·"))
+        exec.execute(Action.Search("보호대", category = "실버·보조용품"), s)
+        assertEquals("silver" to null, api.searches.last().let { it.main to it.mid })
     }
 
     @Test

@@ -1,6 +1,8 @@
 package com.agentpjt.shop
 
 import com.agentpjt.shop.api.ApiResult
+import com.agentpjt.shop.api.CategoryMainDto
+import com.agentpjt.shop.api.CategoryMidDto
 import com.agentpjt.shop.api.CategoryRefDto
 import com.agentpjt.shop.api.ContentDto
 import com.agentpjt.shop.api.DeliveryDto
@@ -55,6 +57,12 @@ object TestData {
     ))
 
     val knee = full("p07002", "무릎 보호대 2개입", 16900, options = listOf(sizeAxis))
+
+    /** 분류 일부. compact() 의 sub 는 "보호대" */
+    val catalog = com.agentpjt.shop.shop.Catalog(listOf(
+        CategoryMainDto("food", "식품·신선", listOf(CategoryMidDto("side-dish", "반찬", listOf(NamedDto("kimchi", "김치"))))),
+        CategoryMainDto("silver", "실버·보조용품", listOf(CategoryMidDto("protector", "보호대·지지대", listOf(NamedDto("knee", "보호대"))))),
+    ))
     val cane = full("p07001", "접이식 알루미늄 지팡이", 19900, fee = 3000)
 }
 
@@ -70,6 +78,8 @@ class FakeShopApi : ShopApi {
     val orders = mutableListOf<BatchOrderInDto>()
 
     private val net = ApiResult.Network(java.io.IOException("offline"))
+
+    override suspend fun categories(): ApiResult<List<CategoryMainDto>> = if (offline) net else ApiResult.Ok(TestData.catalog.mains)
 
     override suspend fun search(query: SearchQuery): ApiResult<SearchDto> {
         searches += query

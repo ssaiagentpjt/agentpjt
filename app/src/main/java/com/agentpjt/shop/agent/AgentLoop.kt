@@ -62,16 +62,18 @@ class AgentLoop(
         var s = state.copy(notes = emptyList()) // 메모는 이번 메시지에 붙였다
         Log.i(TAG, "heard \"$heard\" | ${message.replace("\n", " | ")}")
 
+        val searched = mutableMapOf<Action.Search, Int>() // 이번 발화의 검색 조건 → 결과 수
+
         repeat(maxSteps) { step ->
             val json = try {
-                decider.next(message, Actions.schema(s))
+                decider.next(message, Actions.schema(s, observed = step > 0))
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
                 Log.e(TAG, "step=$step decide failed", t)
                 return@withLock AgentTurn.Failed(s, AgentTurn.Reason.ENGINE)
             }
-            val action = Actions.parse(json, s)
+            val action = Actions.parse(json, s, observed = step > 0)
             if (action == null) {
                 Log.w(TAG, "step=$step 스키마 밖 출력 $json")
                 return@withLock AgentTurn.Failed(s, AgentTurn.Reason.ENGINE)
@@ -83,9 +85,14 @@ class AgentLoop(
                 is Action.Answer -> return@withLock AgentTurn.Said(s, action.text)
                 else -> Unit
             }
+            if (action is Action.Search && action in searched) {
+                message = "(앱) 같은 조건으로 이미 찾았다(결과 ${searched.getValue(action)}개). 검색어를 바꾸거나 조건을 빼서 찾는다."
+                return@repeat
+            }
             if (action.kind.observes) onStep(step(action))
 
             val out = executor.execute(action, s)
+            if (action is Action.Search) searched[action] = out.state.candidates.size.takeIf { out.ok } ?: 0
             s = out.state
             if (out.offline) return@withLock AgentTurn.Failed(s, AgentTurn.Reason.OFFLINE)
 

@@ -72,10 +72,34 @@ class ActionsTest {
         assertEquals(listOf("p07002", "p01001"), adds.map { it.props()["productId"]!!.jsonObject["const"]!!.jsonPrimitive.content })
         val knee = adds.first()
         assertEquals(listOf("M", "L"), knee.props()["options"]!!.jsonObject["properties"]!!.jsonObject["사이즈"]!!.enumValues())
-        assertEquals(listOf("action", "productId"), knee["required"]!!.jsonArray.map { it.jsonPrimitive.content }) // 옵션은 선택
+        assertEquals(listOf("action", "productId", "quantity"), knee["required"]!!.jsonArray.map { it.jsonPrimitive.content }) // 옵션은 선택, 수량은 null 가능
         assertFalse("options" in adds[1].props()) // 옵션을 모르는 상품
         assertEquals(listOf("c1"), of("cart_remove").single().props()["lineId"]!!.enumValues())
         assertEquals(listOf("p01", "p02"), of("show").single().props()["ids"]!!.jsonObject["items"]!!.enumValues())
+    }
+
+    @Test
+    fun searchCategory_onlyFromCategoriesSeenInLatestResults() {
+        fun searchProps(s: ShopState) = Actions.schema(s)["anyOf"]!!.jsonArray.map { it.jsonObject }
+            .single { it.props()["action"]!!.jsonObject["const"]!!.jsonPrimitive.content == "search" }.props()
+        assertFalse("category" in searchProps(ShopState(catalog = TestData.catalog))) // 결과를 보기 전에는 없다
+        val seen = ShopState(catalog = TestData.catalog, candidates = candidates) // compact() 의 sub 는 "보호대"
+        assertEquals(listOf("실버·보조용품", "보호대·지지대"), searchProps(seen)["category"]!!.enumValues())
+        assertEquals("보호대·지지대", (Actions.parse(json("""{"action":"search","query":"무릎","category":"보호대·지지대"}"""), seen) as Action.Search).category)
+        assertNull((Actions.parse(json("""{"action":"search","query":"김치","category":"반찬"}"""), seen) as Action.Search).category)
+    }
+
+    @Test
+    fun conditionSlots_areRequiredButNullable_andHomeIsGoneAfterObserving() {
+        val s = ShopState(candidates = candidates, known = known)
+        val search = Actions.schema(s)["anyOf"]!!.jsonArray.map { it.jsonObject }
+            .single { it.props()["action"]!!.jsonObject["const"]!!.jsonPrimitive.content == "search" }
+        assertEquals(listOf("action", "query", "budget", "sort", "gift"), search["required"]!!.jsonArray.map { it.jsonPrimitive.content })
+        val parsed = Actions.parse(json("""{"action":"search","query":"라디오","budget":"오만 원 안쪽","sort":null,"gift":null}"""), s) as Action.Search
+        assertEquals(50000, parsed.maxPrice)
+        assertNull(parsed.sort)
+        assertTrue(Action.Kind.HOME in Actions.available(s))
+        assertFalse(Action.Kind.HOME in Actions.available(s, observed = true))
     }
 
     @Test

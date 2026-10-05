@@ -12,6 +12,7 @@ import com.agentpjt.shop.agent.AgentTurn
 import com.agentpjt.shop.agent.LiteRtDecider
 import com.agentpjt.shop.agent.ToolExecutor
 import com.agentpjt.shop.agent.systemPrompt
+import com.agentpjt.shop.api.ApiResult
 import com.agentpjt.shop.api.HttpShopApi
 import com.agentpjt.shop.llm.BackendKind
 import com.agentpjt.shop.llm.GemmaEngine
@@ -42,7 +43,8 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
     val listener = Listener(app)
 
     // 말(에이전트)과 터치가 같은 실행기를 쓴다. 주문 경로와 안전 검사가 한 곳에 있다
-    private val executor = ToolExecutor(HttpShopApi(BuildConfig.SHOP_API_BASE_URL, BuildConfig.SHOP_API_KEY))
+    private val api = HttpShopApi(BuildConfig.SHOP_API_BASE_URL, BuildConfig.SHOP_API_KEY)
+    private val executor = ToolExecutor(api)
 
     private val cartStore = CartStore(File(app.filesDir, "cart.json"))
     // 1단계 실측: 이 기기(Adreno 730)에서 GPU 빌드는 출력이 깨져서 범용 파일을 CPU 로 돌린다
@@ -72,6 +74,7 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 인트로는 실제로 준비되는 동안만 보인다. 일부러 늦추지 않는다 */
     private suspend fun boot() {
+        loadCatalog()
         when {
             installer.isInstalled() -> {
                 loadModel(installer.modelFile)
@@ -79,6 +82,14 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
             }
             installer.hasDownload() -> watchDownload()
             else -> needModel()
+        }
+    }
+
+    /** 매장 분류는 대화를 열기 전에 받는다(지시문에 들어간다). 못 받으면 분류 없이 동작한다 */
+    private suspend fun loadCatalog() {
+        when (val r = api.categories()) {
+            is ApiResult.Ok -> _state.update { it.copy(catalog = Catalog(r.value)) }
+            else -> Log.w(TAG, "categories 를 받지 못했다: $r")
         }
     }
 
@@ -424,6 +435,31 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
             is ChatLink.Product -> touch(Action.Open(link.id), null)
             ChatLink.Cart -> touch(Action.ShowCart, null)
             ChatLink.History -> touch(Action.ShowHistory, null)
+        }
+    }
+
+    /**
+     * 개발용 일괄 시험(BuildConfig.DEV_HOOKS). 앱 폴더의 eval.txt 한 줄에 문장 하나.
+     * 문장마다 처음 화면으로 새 세션을 열고 실제 에이전트 루프를 돌린 뒤 끝나기를 기다린다. 결과는 ShopAgent·ShopApi 로그에 남는다.
+     */
+    fun runDevEval() {
+        if (!BuildConfig.DEV_HOOKS) return
+        val file = File(getApplication<Application>().getExternalFilesDir(null), "eval.txt")
+        val lines = file.takeIf { it.exists() }?.readLines()?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+        viewModelScope.launch {
+            while (_state.value.ai != AiStatus.READY) delay(500)
+            lines.forEachIndexed { i, line ->
+                go(Screen.Home, speak = false)
+                delay(1500) // 대화 재시작(reset)이 끝나기를 기다린다
+                Log.i(TAG, "EVAL ${i + 1}/${lines.size} \"$line\"")
+                submitText(line)
+                delay(300)
+                while (_state.value.agentBusy) delay(300)
+                val s = _state.value
+                Log.i(TAG, "EVAL-END ${i + 1} screen=${s.screen} shown=${s.shown.map { it.name }} said=\"${s.bubble.ifEmpty { s.said }}\"")
+                speaker.stop()
+            }
+            Log.i(TAG, "EVAL-DONE ${lines.size}")
         }
     }
 

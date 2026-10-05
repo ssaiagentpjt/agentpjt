@@ -27,6 +27,11 @@ import com.agentpjt.shop.shop.withObjectParticle
  */
 class ToolExecutor(private val api: ShopApi, private val userId: String = DEMO_USER_ID) {
 
+    private companion object {
+        /** 모델이 고를 후보 수. 5개로는 엉뚱한 결과뿐일 때 고를 것이 없었다. 늘리면 결과 메시지가 길어진다(실측해 조정) */
+        const val SEARCH_LIMIT = 8
+    }
+
     data class Outcome(
         val state: ShopState,
         val ok: Boolean,
@@ -58,14 +63,17 @@ class ToolExecutor(private val api: ShopApi, private val userId: String = DEMO_U
     }
 
     private suspend fun search(a: Action.Search, s: ShopState): Outcome {
+        val filter = a.category?.let { s.catalog.filterOf(it) }
         val query = SearchQuery(
             q = a.query, minPrice = a.minPrice, maxPrice = a.maxPrice, priceTier = a.priceTier,
-            sort = a.sort, gift = a.gift, audience = a.audience,
+            sort = a.sort, gift = a.gift, audience = a.audience, main = filter?.first, mid = filter?.second,
+            limit = SEARCH_LIMIT,
         )
         return when (val r = api.search(query)) {
             is ApiResult.Ok -> {
                 val items = r.value.products.map { it.toSummary() }
-                ok(s.copy(candidates = items, offline = false).remember(items.map { it.known() }), ToolResults.search(a.query, r.value.total, items))
+                ok(s.copy(candidates = items, offline = false).remember(items.map { it.known() }),
+                    ToolResults.search(a.query + (a.category?.let { " · 분류 $it" } ?: ""), r.value.total, items, s.catalog))
             }
             else -> apiFail(s, r)
         }

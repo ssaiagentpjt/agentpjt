@@ -2,6 +2,7 @@ package com.agentpjt.shop.agent
 
 import com.agentpjt.shop.shop.Screen
 import com.agentpjt.shop.shop.ShopState
+import com.agentpjt.shop.shop.parseWon
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
@@ -32,6 +33,8 @@ sealed interface Action {
         val priceTier: String? = null,
         val gift: Boolean? = null,
         val audience: String? = null,
+        /** 매장 분류 이름(대분류 또는 중분류). 막연한 말을 실제로 있는 분류로 좁힌다 */
+        val category: String? = null,
     ) : Action { override val kind get() = Kind.SEARCH }
 
     data class Info(val productId: String) : Action { override val kind get() = Kind.INFO }
@@ -61,10 +64,11 @@ sealed interface Action {
     }
 }
 
-/** 서버가 받는 값. 스키마 enum 으로 묶어서 모델이 이 밖의 값을 낼 수 없다 */
+/**
+ * 서버가 받는 정렬 값. 스키마 enum 으로 묶어서 모델이 이 밖의 값을 낼 수 없다.
+ * 서버의 priceTier·audience·minPrice 거르기는 모델에게 주지 않는다: 말하지 않았는데도 채워 맞는 상품을 걸렀다(PC 벤치)
+ */
 val SORTS = listOf("relevance", "sales", "rating", "price_asc", "price_desc", "discount", "unit_price")
-val TIERS = listOf("low", "mid", "high")
-val AUDIENCES = listOf("senior", "general", "kids")
 
 /**
  * 상태에서 행동의 가능 여부와 값의 범위를 계산한다. 빼는 것은 사실상 불가능하거나 위험한 것뿐이다 —
@@ -73,11 +77,16 @@ val AUDIENCES = listOf("senior", "general", "kids")
  */
 object Actions {
 
-    fun available(s: ShopState): List<Action.Kind> = Action.Kind.entries.filter { k ->
+    /**
+     * [observed]: 이번 발화에서 이미 관찰 행동(search 등)의 결과를 받았다. 그 뒤에 home(세션을 끝냄)을 고르면
+     * 어르신의 요청을 버리게 된다 — 실기기에서 검색 0건 뒤 home 으로 빠졌다(eval5 1·3번). 그래서 그때는 뺀다.
+     */
+    fun available(s: ShopState, observed: Boolean = false): List<Action.Kind> = Action.Kind.entries.filter { k ->
         val confirming = s.effectiveScreen == Screen.Confirm && s.cart.isNotEmpty()
         when (k) {
+            Action.Kind.HOME -> !observed
             Action.Kind.SEARCH, Action.Kind.HISTORY, Action.Kind.SHOW_CART, Action.Kind.SHOW_HISTORY,
-            Action.Kind.HOME, Action.Kind.ASK, Action.Kind.ANSWER -> true
+            Action.Kind.ASK, Action.Kind.ANSWER -> true
             Action.Kind.INFO, Action.Kind.OPEN, Action.Kind.CART_ADD -> s.known.isNotEmpty()
             Action.Kind.SHOW -> s.candidates.isNotEmpty()
             Action.Kind.CART_REMOVE, Action.Kind.CART_QUANTITY -> s.cart.isNotEmpty()
@@ -88,27 +97,32 @@ object Actions {
     }
 
     /** 지금 상태에서 고를 수 있는 행동만 담은 JSON 스키마(anyOf). ResponseFormat 으로 출력을 이 안에 묶는다 */
-    fun schema(s: ShopState): JsonObject = buildJsonObject {
-        put("anyOf", buildJsonArray { available(s).flatMap { branches(it, s) }.forEach { add(it) } })
+    fun schema(s: ShopState, observed: Boolean = false): JsonObject = buildJsonObject {
+        put("anyOf", buildJsonArray { available(s, observed).flatMap { branches(it, s) }.forEach { add(it) } })
     }
 
+    /**
+     * 검색을 좁힐 수 있는 분류: 최근 검색 결과에 실제로 나온 상품들의 대분류·중분류뿐이다.
+     * 첫 검색에서 모델이 분류를 짐작으로 채워 맞는 상품을 걸렀다(eval5: "음식"+음료·차 0건, "돌잔치 선물"+기초화장품)
+     */
+    fun observedCategories(s: ShopState): List<String> =
+        s.candidates.flatMap { s.catalog.parentsOf(it.sub) }.distinct()
+
     private fun branches(k: Action.Kind, s: ShopState): List<JsonObject> = when (k) {
-        Action.Kind.SEARCH -> listOf(obj(k, required = listOf("query")) {
+        Action.Kind.SEARCH -> listOf(obj(k, required = listOf("query", "budget", "sort", "gift")) {
             put("query", str())
-            put("maxPrice", int(min = 0))
-            put("minPrice", int(min = 0))
-            put("sort", enumOf(SORTS))
-            put("priceTier", enumOf(TIERS))
-            put("gift", buildJsonObject { put("type", "boolean") })
-            put("audience", enumOf(AUDIENCES))
+            put("budget", nullable(str(max = 30)))
+            put("sort", nullable(enumOf(SORTS)))
+            put("gift", nullable(buildJsonObject { put("type", "boolean") }))
+            observedCategories(s).takeIf { it.isNotEmpty() }?.let { put("category", enumOf(it)) }
         })
         Action.Kind.INFO, Action.Kind.OPEN -> listOf(obj(k, required = listOf("productId")) { put("productId", enumOf(s.known.map { it.id })) })
         // 상품마다 가지를 나눠 옵션 값이 그 상품의 실제 값만 되게 한다. 옵션은 선택 사항 —
         // 어르신이 말하지 않은 옵션을 모델이 지어 채우지 않게, 빠지면 실행기가 고를 수 있는 값을 돌려준다
         Action.Kind.CART_ADD -> s.known.map { p ->
-            obj(k, required = listOf("productId")) {
+            obj(k, required = listOf("productId", "quantity")) {
                 put("productId", buildJsonObject { put("const", p.id) })
-                put("quantity", int(1, 9))
+                put("quantity", nullable(int(1, 9)))
                 if (p.options.isNotEmpty()) {
                     putJsonObject("options") {
                         put("type", "object")
@@ -140,19 +154,18 @@ object Actions {
      * 모델 출력 → 행동. 출력은 스키마로 묶여 있지만, 주문처럼 되돌리기 어려운 일이 걸려 있어 같은 조건을 한 번 더 본다.
      * 맞지 않으면 null(엔진 이상으로 다룬다).
      */
-    fun parse(json: JsonObject, s: ShopState): Action? {
+    fun parse(json: JsonObject, s: ShopState, observed: Boolean = false): Action? {
         val kind = Action.Kind.entries.firstOrNull { it.wire == json.string("action") } ?: return null
-        if (kind !in available(s)) return null
+        if (kind !in available(s, observed)) return null
         fun knownId(key: String) = json.string(key)?.takeIf { id -> s.known.any { it.id == id } }
         fun lineId() = json.string("lineId")?.takeIf { id -> s.cart.any { it.lineId == id } }
         return when (kind) {
             Action.Kind.SEARCH -> Action.Search(
                 query = json.string("query")?.takeIf { it.isNotBlank() } ?: return null,
-                maxPrice = json.int("maxPrice"), minPrice = json.int("minPrice"),
+                maxPrice = json.string("budget")?.let(::parseWon),
                 sort = json.string("sort")?.takeIf { it in SORTS },
-                priceTier = json.string("priceTier")?.takeIf { it in TIERS },
                 gift = (json["gift"] as? JsonPrimitive)?.booleanOrNull,
-                audience = json.string("audience")?.takeIf { it in AUDIENCES },
+                category = json.string("category")?.takeIf { it in observedCategories(s) },
             )
             Action.Kind.INFO -> knownId("productId")?.let { Action.Info(it) }
             Action.Kind.OPEN -> knownId("productId")?.let { Action.Open(it) }
@@ -207,6 +220,11 @@ object Actions {
         put("type", "integer")
         if (min != null) put("minimum", min)
         if (max != null) put("maximum", max)
+    }
+
+    /** 값 또는 null. 필수로 두면 모델이 그 칸을 반드시 거치고, 말하지 않았으면 null 을 쓴다 */
+    private fun nullable(schema: JsonObject) = buildJsonObject {
+        put("anyOf", buildJsonArray { add(schema); add(buildJsonObject { put("type", "null") }) })
     }
 
     private fun enumOf(values: List<String>) = buildJsonObject {

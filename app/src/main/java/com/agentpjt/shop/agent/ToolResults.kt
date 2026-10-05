@@ -2,6 +2,7 @@ package com.agentpjt.shop.agent
 
 import com.agentpjt.shop.api.OrderDto
 import com.agentpjt.shop.shop.CartLine
+import com.agentpjt.shop.shop.Catalog
 import com.agentpjt.shop.shop.ProductDetail
 import com.agentpjt.shop.shop.ProductSummary
 import com.agentpjt.shop.shop.readWon
@@ -13,15 +14,16 @@ import com.agentpjt.shop.shop.total
  */
 object ToolResults {
 
-    fun search(query: String, total: Int, items: List<ProductSummary>): String =
+    fun search(query: String, total: Int, items: List<ProductSummary>, catalog: Catalog = Catalog()): String =
         if (items.isEmpty()) {
-            "(앱) '$query' 검색 결과가 없다."
+            "(앱) '$query' 검색 결과가 없다. 검색어를 바꾸거나 분류 없이 다시 찾을 수 있다."
         } else {
-            "(앱) '$query' 검색 결과 ${total}개 중 ${items.size}개:\n" + items.joinToString("\n") { it.line() }
+            "(앱) '$query' 검색 결과 ${total}개 중 ${items.size}개:\n" + items.joinToString("\n") { it.line(catalog) }
         }
 
-    private fun ProductSummary.line() = buildString {
-        append("$id $name · $priceSpoken · $tier · 별점 $rating")
+    // 분류 경로를 붙인다: 이름만으로는 "식사 대용 분말"이 끼니인지 영양제인지 모델이 가릴 수 없었다(실기기 로그)
+    private fun ProductSummary.line(catalog: Catalog) = buildString {
+        append("$id $name · ${catalog.pathOf(sub)} · $priceSpoken · $tier · 별점 $rating")
         if (badges.isNotEmpty()) append(" · ${badges.take(2).joinToString("/")}")
         if (options.isNotEmpty()) append(" · 옵션 " + options.entries.joinToString(" ") { "${it.key}(${it.value.joinToString("/")})" })
         if (stock == "low") append(" · 품절 임박")

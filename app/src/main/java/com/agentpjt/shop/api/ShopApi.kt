@@ -38,12 +38,16 @@ data class SearchQuery(
     val sort: String? = null,
     val gift: Boolean? = null,
     val audience: String? = null,
+    /** 분류로 좁히기(서버 대분류·중분류 id) */
+    val main: String? = null,
+    val mid: String? = null,
     val limit: Int = 5,
 )
 
 /** 목업 상품 API. 테스트에서 가짜를 끼울 수 있게 인터페이스로 둔다. */
 interface ShopApi {
     suspend fun search(query: SearchQuery): ApiResult<SearchDto>
+    suspend fun categories(): ApiResult<List<CategoryMainDto>>
     suspend fun product(id: String): ApiResult<ProductFullDto>
     suspend fun placeBatch(order: BatchOrderInDto): ApiResult<BatchOrderDto>
     suspend fun orders(userId: String, limit: Int): ApiResult<List<OrderDto>>
@@ -66,11 +70,16 @@ class HttpShopApi(
             query.sort?.let { addQueryParameter("sort", it) }
             query.gift?.let { addQueryParameter("gift", it.toString()) }
             query.audience?.let { addQueryParameter("audience", it) }
+            query.main?.let { addQueryParameter("main", it) }
+            query.mid?.let { addQueryParameter("mid", it) }
             addQueryParameter("limit", query.limit.toString())
             addQueryParameter("view", "compact")
         }.build()
         return call(Request.Builder().url(url).get().build())
     }
+
+    override suspend fun categories(): ApiResult<List<CategoryMainDto>> =
+        call(Request.Builder().url(base.newBuilder().addPathSegment("categories").build()).get().build())
 
     override suspend fun product(id: String): ApiResult<ProductFullDto> =
         call(Request.Builder().url(base.newBuilder().addPathSegment("products").addPathSegment(id).build()).get().build())

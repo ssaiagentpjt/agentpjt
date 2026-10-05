@@ -66,10 +66,18 @@ class AgentLoopTest {
 
     @Test
     fun stepLimit_fails() = runTest {
-        val d = FakeDecider(*Array(3) { """{"action":"search","query":"x"}""" })
+        val d = FakeDecider(*Array(3) { """{"action":"search","query":"x$it"}""" })
         val turn = loop(d, maxSteps = 3).handle("아무 말", ShopState())
         assertEquals(AgentTurn.Reason.STEP_LIMIT, (turn as AgentTurn.Failed).reason)
         assertEquals(3, api.searches.size)
+    }
+
+    @Test
+    fun sameSearchTwice_isNotSentAgain_andModelIsTold() = runTest {
+        val d = FakeDecider("""{"action":"search","query":"x"}""", """{"action":"search","query":"x"}""", """{"action":"ask","question":"무엇을 찾을까요?"}""")
+        loop(d).handle("아무 말", ShopState())
+        assertEquals(1, api.searches.size)
+        assertTrue(d.messages[2], d.messages[2].startsWith("(앱) 같은 조건으로 이미 찾았다(결과 2개)"))
     }
 
     @Test

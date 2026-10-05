@@ -125,6 +125,8 @@ data class ShopState(
     val returnTo: Screen = Screen.Home,
     val ai: AiStatus = AiStatus.LOADING,
     val setup: Setup = Setup(),
+    /** 매장 분류(서버 /categories). 검색을 분류로 좁히고 결과에 분류 경로를 붙인다 */
+    val catalog: Catalog = Catalog(),
     val micDenied: Boolean = false,
     /** 마지막 서버 호출이 네트워크 오류였다(안내 띠) */
     val offline: Boolean = false,
@@ -141,7 +143,7 @@ data class ShopState(
     }
 
     /** 처음 화면으로: 세션 상태는 비우고 장바구니와 앱 상태만 남긴다 */
-    fun freshSession(): ShopState = ShopState(ai = ai, micDenied = micDenied, cart = cart, setup = setup, log = log)
+    fun freshSession(): ShopState = ShopState(ai = ai, micDenied = micDenied, cart = cart, setup = setup, log = log, catalog = catalog)
 
     /** 말풍선을 쌓는다. 바로 앞과 같은 손주야 말·구분선은 다시 쌓지 않는다(같은 화면 대본이 되풀이될 때). 어르신 말은 늘 쌓는다 */
     fun withMessage(msg: ChatMsg): ShopState {

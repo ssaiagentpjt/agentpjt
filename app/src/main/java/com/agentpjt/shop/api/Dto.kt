@@ -32,6 +32,13 @@ data class ProductCompactDto(
 @Serializable
 data class SearchDto(val query: String, val total: Int, val products: List<ProductCompactDto>)
 
+/** GET /categories: 대분류 → 중분류 → 소분류. 모델에게 매장 분류를 알려 주고 검색을 분류로 좁히는 데 쓴다 */
+@Serializable
+data class CategoryMainDto(val id: String, val name: String, val mids: List<CategoryMidDto> = emptyList())
+
+@Serializable
+data class CategoryMidDto(val id: String, val name: String, val subs: List<NamedDto> = emptyList())
+
 @Serializable
 data class NamedDto(val id: String, val name: String)
 
