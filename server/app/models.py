@@ -325,6 +325,7 @@ class OrderErrorDetail(BaseModel):
     unknownOptions: list[str] = Field(default_factory=list, description="이 상품에 없는 옵션 이름")
     soldOut: list[str] = Field(default_factory=list, description="품절인 옵션 값")
     choices: dict[str, list[str]] = Field(default_factory=dict, description="지금 고를 수 있는 값 {옵션 이름: [값…]}")
+    available: int | None = Field(default=None, description="재고가 모자랄 때 지금 남은 수량")
     index: int | None = Field(default=None, description="여러 상품 주문에서 문제가 된 줄의 순서(0부터)")
     productId: str | None = Field(default=None, description="여러 상품 주문에서 문제가 된 줄의 상품 id")
 

@@ -82,6 +82,12 @@ create table if not exists orders (
   orderId text primary key, userId text not null, productId text not null,
   quantity integer not null, totalPrice integer not null, orderedAt text not null,
   options text not null default '{}');  -- JSON 객체 {"사이즈": "L"}
+-- 재고 변동 기록. 상품 테이블은 시작할 때마다 시드로 다시 만들어지므로, 다시 만든 뒤 이 합계를 반영해야
+-- 재시작해도 주문으로 줄어든 재고가 유지된다(Store.__init__)
+create table if not exists stock_ledger (
+  id integer primary key, productId text not null, delta integer not null,
+  orderId text not null, reason text not null, at text not null);  -- reason: ORDER · CANCEL
+create index if not exists stock_ledger_order on stock_ledger(orderId);
 """
 
 

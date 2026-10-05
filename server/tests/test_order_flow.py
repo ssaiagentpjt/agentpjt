@@ -64,3 +64,55 @@ def test_batch_errors_keep_code_and_line(client):
 
 def test_order_time_comes_from_clock(client, clock):
     assert order(client, "p03003").json()["orderedAt"] == "2026-10-05T14:00:00+09:00"
+
+
+# ---- 재고 (G-02) ----
+
+
+def stock(client, pid):
+    return client.get(f"/products/{pid}", headers=KEY).json()["stock"]
+
+
+def test_order_reduces_stock(client):
+    before = stock(client, "p03003")["quantity"]
+    assert order(client, "p03003", qty=3).status_code == 200
+    assert stock(client, "p03003")["quantity"] == before - 3
+
+
+def test_stock_status_follows_quantity(client):
+    # p03007 은 재고 8개(low). 8개를 다 사면 sold_out 이 되고 더 주문할 수 없다
+    assert stock(client, "p03007") == {"status": "low", "quantity": 8}
+    assert order(client, "p03007", qty=8).status_code == 200
+    assert stock(client, "p03007") == {"status": "sold_out", "quantity": 0}
+    r = order(client, "p03007")
+    assert (r.status_code, r.json()["detail"]["code"]) == (409, "OUT_OF_STOCK")
+
+
+def test_quantity_over_stock_is_rejected(client):
+    r = order(client, "p03007", qty=9)
+    d = r.json()["detail"]
+    assert (r.status_code, d["code"], d["available"]) == (409, "OUT_OF_STOCK", 8)
+    assert stock(client, "p03007")["quantity"] == 8
+
+
+def test_batch_sums_same_product_against_stock(client):
+    r = client.post("/orders/batch", headers=KEY, json={"userId": "u1", "items": [
+        {"productId": "p03007", "quantity": 5}, {"productId": "p03007", "quantity": 4}]})
+    d = r.json()["detail"]
+    assert (r.status_code, d["code"], d["available"], d["index"]) == (409, "OUT_OF_STOCK", 8, 0)
+    assert stock(client, "p03007")["quantity"] == 8
+
+
+def test_batch_reduces_stock_per_line(client):
+    before = stock(client, "p03003")["quantity"]
+    r = client.post("/orders/batch", headers=KEY, json={"userId": "u1", "items": [
+        {"productId": "p03003", "quantity": 2}, {"productId": "p03003", "quantity": 1}]})
+    assert r.status_code == 200
+    assert stock(client, "p03003")["quantity"] == before - 3
+
+
+def test_stock_survives_restart(db_path, clock):
+    c1 = TestClient(create_app(data_dir=FIXTURES, db_path=db_path, api_key="k", clock=clock))
+    assert order(c1, "p03007", qty=5).status_code == 200
+    c2 = TestClient(create_app(data_dir=FIXTURES, db_path=db_path, api_key="k", clock=clock))
+    assert stock(c2, "p03007") == {"status": "low", "quantity": 3}

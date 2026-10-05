@@ -5,6 +5,7 @@ import random
 import sqlite3
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -67,6 +68,30 @@ def now_kst() -> datetime:
     return datetime.now(KST)
 
 
+LOW_STOCK = 20  # validate.py 와 같은 기준: 1~20 이면 low(품절 임박), 21 이상이면 in_stock
+
+
+def stock_status(quantity: int) -> str:
+    return "sold_out" if quantity <= 0 else "low" if quantity <= LOW_STOCK else "in_stock"
+
+
+@dataclass(frozen=True)
+class Line:
+    """검사를 통과한 주문 한 줄."""
+
+    product_id: str
+    name: str
+    quantity: int
+    options: dict[str, str]
+    unit_price: int  # 가격 + 고른 옵션의 추가 금액
+    shipping_fee: int
+    delivery_days: int
+
+    @property
+    def total(self) -> int:
+        return self.unit_price * self.quantity + self.shipping_fee
+
+
 class Store:
     def __init__(self, data_dir: Path, db_path: str, clock: Callable[[], datetime] = now_kst):
         # FastAPI 는 동기 엔드포인트를 스레드 풀에서 돌리므로 같은 연결을 여러 스레드가 쓴다
@@ -86,6 +111,9 @@ class Store:
                 "insert or ignore into orders (orderId, userId, productId, quantity, totalPrice, orderedAt) values (?, ?, ?, ?, ?, ?)",
                 (o.orderId, o.userId, o.productId, o.quantity, row["price"] * o.quantity + row["shipping_fee"], o.orderedAt),
             )
+        # 시드로 다시 만든 재고에 지금까지의 주문·취소를 반영한다. 시드에서 사라진 상품의 기록은 건너뛴다
+        for r in self.conn.execute("select productId, sum(delta) as d from stock_ledger group by productId").fetchall():
+            self._set_stock(r["productId"], r["d"])
         self.conn.commit()
 
     # ---- 카테고리 ----
@@ -233,9 +261,10 @@ class Store:
 
     # ---- 주문 ----
 
-    def _check_line(self, product_id: str, quantity: int, chosen: dict[str, str]) -> tuple[str, int]:
-        """주문 한 줄을 검사하고 (상품명, 합계)를 돌려준다. 받을 수 없으면 OrderError."""
-        row = self.conn.execute("select name, price, shipping_fee, stock_status from products where id = ?", (product_id,)).fetchone()
+    def _check_line(self, product_id: str, quantity: int, chosen: dict[str, str]) -> Line:
+        """주문 한 줄의 상품·옵션을 검사한다. 받을 수 없으면 OrderError. 재고 수량은 _check_lines 가 줄을 모아서 본다."""
+        row = self.conn.execute(
+            "select name, price, shipping_fee, delivery_days, stock_status from products where id = ?", (product_id,)).fetchone()
         if row is None:
             raise OrderError(404, "PRODUCT_NOT_FOUND", {"message": f"없는 상품: {product_id}"})
         if row["stock_status"] == "sold_out":
@@ -262,47 +291,85 @@ class Store:
                 "soldOut": sold_out,
                 "choices": {a.name: [v.value for v in a.values if v.stock != "sold_out"] for a in axes},
             })
-        return row["name"], (row["price"] + sum(v.priceAdd for v in picked)) * quantity + row["shipping_fee"]
+        return Line(product_id, row["name"], quantity, chosen, row["price"] + sum(v.priceAdd for v in picked),
+                    row["shipping_fee"], row["delivery_days"])
 
-    def _insert_order(self, user_id: str, product_id: str, quantity: int, total: int, chosen: dict[str, str], now: datetime) -> str:
-        """주문 한 줄을 넣고 주문번호를 돌려준다. 커밋은 부른 쪽이 한다."""
-        opts = json.dumps(chosen, ensure_ascii=False)
+    def _check_lines(self, items: list[tuple[str, int, dict[str, str]]], indexed: bool) -> list[Line]:
+        """모든 줄을 검사하고, 같은 상품은 수량을 합쳐 재고와 견준다. indexed 면 실패한 줄의 index·productId 를 붙인다."""
+        lines = []
+        for i, (product_id, quantity, chosen) in enumerate(items):
+            try:
+                lines.append(self._check_line(product_id, quantity, chosen))
+            except OrderError as e:
+                if not indexed:
+                    raise
+                raise OrderError(e.status, e.detail["code"], {**e.detail, "index": i, "productId": product_id}) from e
+        need: dict[str, int] = {}
+        for line in lines:
+            need[line.product_id] = need.get(line.product_id, 0) + line.quantity
+        for i, line in enumerate(lines):
+            have = self.conn.execute("select stock_qty from products where id = ?", (line.product_id,)).fetchone()[0]
+            if need[line.product_id] > have:
+                detail = {"message": "재고가 모자란다", "available": have}
+                if indexed:
+                    detail |= {"index": i, "productId": line.product_id}
+                raise OrderError(409, "OUT_OF_STOCK", detail)
+        return lines
+
+    def _set_stock(self, product_id: str, delta: int) -> None:
+        """재고 수량을 delta 만큼 바꾸고 상태(in_stock · low · sold_out)를 다시 정한다. 커밋은 부른 쪽이 한다."""
+        row = self.conn.execute("select stock_qty from products where id = ?", (product_id,)).fetchone()
+        if row is None:
+            return
+        qty = max(0, row[0] + delta)
+        self.conn.execute("update products set stock_qty = ?, stock_status = ? where id = ?", (qty, stock_status(qty), product_id))
+
+    def _move_stock(self, product_id: str, delta: int, order_id: str, reason: str, now: datetime) -> None:
+        """재고를 바꾸고 기록을 남긴다. 주문은 음수, 취소는 양수."""
+        self._set_stock(product_id, delta)
+        self.conn.execute("insert into stock_ledger (productId, delta, orderId, reason, at) values (?, ?, ?, ?, ?)",
+                          (product_id, delta, order_id, reason, now.isoformat(timespec="seconds")))
+
+    def _insert_order(self, user_id: str, line: Line, now: datetime) -> str:
+        """주문 한 줄을 넣고 재고를 줄인 뒤 주문번호를 돌려준다. 커밋은 부른 쪽이 한다."""
+        opts = json.dumps(line.options, ensure_ascii=False)
         for _ in range(20):
             order_id = f"M-{now:%Y%m%d}-{random.randint(1000, 9999)}"
             try:
                 self.conn.execute(
                     "insert into orders (orderId, userId, productId, quantity, totalPrice, orderedAt, options)"
                     " values (?, ?, ?, ?, ?, ?, ?)",
-                    (order_id, user_id, product_id, quantity, total, now.isoformat(timespec="seconds"), opts))
-                return order_id
+                    (order_id, user_id, line.product_id, line.quantity, line.total, now.isoformat(timespec="seconds"), opts))
+                break
             except sqlite3.IntegrityError:
                 continue  # 같은 날 주문번호가 겹치면 다시 뽑는다
-        raise RuntimeError("주문번호를 만들지 못했다")
+        else:
+            raise RuntimeError("주문번호를 만들지 못했다")
+        self._move_stock(line.product_id, -line.quantity, order_id, "ORDER", now)
+        return order_id
 
     def place_order(self, user_id: str, product_id: str, quantity: int, chosen: dict[str, str]) -> tuple[str, str, int, str]:
         """(주문번호, 상품명, 합계, 주문 시각). 받을 수 없으면 OrderError."""
         with self.order_lock:
-            name, total = self._check_line(product_id, quantity, chosen)
+            [line] = self._check_lines([(product_id, quantity, chosen)], indexed=False)
             now = self.clock()
-            order_id = self._insert_order(user_id, product_id, quantity, total, chosen, now)
-            self.conn.commit()
-        return order_id, name, total, now.isoformat(timespec="seconds")
+            try:
+                order_id = self._insert_order(user_id, line, now)
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
+        return order_id, line.name, line.total, now.isoformat(timespec="seconds")
 
     def place_batch(self, user_id: str, items: list[tuple[str, int, dict[str, str]]]) -> list[tuple[str, str, int, str]]:
         """여러 줄을 한꺼번에 주문한다(장바구니 결제). 모든 줄을 먼저 검사하고, 하나라도 안 되면 아무것도 넣지 않는다.
         실패한 줄은 OrderError detail 의 index·productId 로 알린다. 성공하면 줄마다 (주문번호, 상품명, 합계, 주문 시각)."""
         with self.order_lock:
-            checked = []
-            for i, (product_id, quantity, chosen) in enumerate(items):
-                try:
-                    checked.append(self._check_line(product_id, quantity, chosen))
-                except OrderError as e:
-                    raise OrderError(e.status, e.detail["code"], {**e.detail, "index": i, "productId": product_id}) from e
+            lines = self._check_lines(items, indexed=True)
             now = self.clock()
             at = now.isoformat(timespec="seconds")
             try:
-                out = [(self._insert_order(user_id, pid, qty, total, chosen, now), name, total, at)
-                       for (pid, qty, chosen), (name, total) in zip(items, checked, strict=True)]
+                out = [(self._insert_order(user_id, line, now), line.name, line.total, at) for line in lines]
                 self.conn.commit()
             except Exception:
                 self.conn.rollback()  # 일부만 들어가는 일이 없게 한다
