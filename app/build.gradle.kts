@@ -13,6 +13,10 @@ val localProps = Properties().apply {
 }
 fun local(key: String, default: String) = localProps.getProperty(key) ?: default
 
+// 공개 APK 서명 키. CI(app-release.yml)가 GitHub Secret 에서 환경변수로 넣는다. 없으면(로컬) release 는 서명 없이 빌드된다.
+// 같은 키로 계속 내야 새 버전이 기존 설치 위에 업데이트된다 — 키 파일은 저장소 밖(C:\dev\secrets)에 둔다.
+val keystorePath: String? = System.getenv("ANDROID_KEYSTORE_PATH")
+
 android {
     namespace = "com.agentpjt.shop"
     compileSdk = 36
@@ -22,15 +26,29 @@ android {
         // litertlm-android 0.17.1 AAR 매니페스트의 minSdkVersion
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // 태그(app-v0.2.0)와 실행 번호를 CI 가 넘긴다. 업데이트 설치는 versionCode 가 커져야 한다
+        versionCode = (findProperty("appVersionCode") as String?)?.toInt() ?: 1
+        versionName = (findProperty("appVersion") as String?) ?: "0.1.0"
         buildConfigField("String", "SHOP_API_BASE_URL", "\"${local("shop.apiBaseUrl", "https://shop-api.bomun.dev")}\"")
         buildConfigField("String", "SHOP_API_KEY", "\"${local("shop.apiKey", "")}\"")
     }
 
+    signingConfigs {
+        if (keystorePath != null) {
+            create("release") {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            // LiteRT-LM 이 리플렉션으로 클래스를 읽어서 줄이기(minify)는 끈다. 켜려면 keep 규칙을 따로 맞춰야 한다
             isMinifyEnabled = false
+            if (keystorePath != null) signingConfig = signingConfigs.getByName("release")
         }
     }
 
