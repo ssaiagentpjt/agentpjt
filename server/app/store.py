@@ -219,8 +219,8 @@ class Store:
 
     # ---- 주문 ----
 
-    def place_order(self, user_id: str, product_id: str, quantity: int, chosen: dict[str, str]) -> tuple[str, str, int, str]:
-        """(주문번호, 상품명, 합계, 주문 시각). 받을 수 없으면 OrderError."""
+    def _check_line(self, product_id: str, quantity: int, chosen: dict[str, str]) -> tuple[str, int]:
+        """주문 한 줄을 검사하고 (상품명, 합계)를 돌려준다. 받을 수 없으면 OrderError."""
         row = self.conn.execute("select name, price, shipping_fee, stock_status from products where id = ?", (product_id,)).fetchone()
         if row is None:
             raise OrderError(404, {"message": f"없는 상품: {product_id}"})
@@ -248,10 +248,10 @@ class Store:
                 "soldOut": sold_out,
                 "choices": {a.name: [v.value for v in a.values if v.stock != "sold_out"] for a in axes},
             })
+        return row["name"], (row["price"] + sum(v.priceAdd for v in picked)) * quantity + row["shipping_fee"]
 
-        now = datetime.now(KST)
-        total = (row["price"] + sum(v.priceAdd for v in picked)) * quantity + row["shipping_fee"]
-        ordered_at = now.isoformat(timespec="seconds")
+    def _insert_order(self, user_id: str, product_id: str, quantity: int, total: int, chosen: dict[str, str], now: datetime) -> str:
+        """주문 한 줄을 넣고 주문번호를 돌려준다. 커밋은 부른 쪽이 한다."""
         opts = json.dumps(chosen, ensure_ascii=False)
         for _ in range(20):
             order_id = f"M-{now:%Y%m%d}-{random.randint(1000, 9999)}"
@@ -259,12 +259,39 @@ class Store:
                 self.conn.execute(
                     "insert into orders (orderId, userId, productId, quantity, totalPrice, orderedAt, options)"
                     " values (?, ?, ?, ?, ?, ?, ?)",
-                    (order_id, user_id, product_id, quantity, total, ordered_at, opts))
-                self.conn.commit()
-                return order_id, row["name"], total, ordered_at
+                    (order_id, user_id, product_id, quantity, total, now.isoformat(timespec="seconds"), opts))
+                return order_id
             except sqlite3.IntegrityError:
                 continue  # 같은 날 주문번호가 겹치면 다시 뽑는다
         raise RuntimeError("주문번호를 만들지 못했다")
+
+    def place_order(self, user_id: str, product_id: str, quantity: int, chosen: dict[str, str]) -> tuple[str, str, int, str]:
+        """(주문번호, 상품명, 합계, 주문 시각). 받을 수 없으면 OrderError."""
+        name, total = self._check_line(product_id, quantity, chosen)
+        now = datetime.now(KST)
+        order_id = self._insert_order(user_id, product_id, quantity, total, chosen, now)
+        self.conn.commit()
+        return order_id, name, total, now.isoformat(timespec="seconds")
+
+    def place_batch(self, user_id: str, items: list[tuple[str, int, dict[str, str]]]) -> list[tuple[str, str, int, str]]:
+        """여러 줄을 한꺼번에 주문한다(장바구니 결제). 모든 줄을 먼저 검사하고, 하나라도 안 되면 아무것도 넣지 않는다.
+        실패한 줄은 OrderError detail 의 index·productId 로 알린다. 성공하면 줄마다 (주문번호, 상품명, 합계, 주문 시각)."""
+        checked = []
+        for i, (product_id, quantity, chosen) in enumerate(items):
+            try:
+                checked.append(self._check_line(product_id, quantity, chosen))
+            except OrderError as e:
+                raise OrderError(e.status, {**e.detail, "index": i, "productId": product_id}) from e
+        now = datetime.now(KST)
+        at = now.isoformat(timespec="seconds")
+        try:
+            out = [(self._insert_order(user_id, pid, qty, total, chosen, now), name, total, at)
+                   for (pid, qty, chosen), (name, total) in zip(items, checked, strict=True)]
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()  # 일부만 들어가는 일이 없게 한다
+            raise
+        return out
 
     def orders_of(self, user_id: str, limit: int) -> list[dict]:
         rows = self.conn.execute(

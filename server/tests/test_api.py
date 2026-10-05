@@ -130,3 +130,33 @@ def test_sort_keeps_products_matching_every_word(client):
     # 모든 낱말이 맞는 상품이 없으면 하나라도 맞는 상품으로 물러난다
     fallback = client.get("/products/search", params={"q": "무릎 햅쌀", "sort": "rating"}, headers=KEY).json()
     assert fallback["total"] >= 2
+
+
+def test_batch_order_places_every_line(client):
+    before = len(client.get("/users/u001/orders", params={"limit": 50}, headers=KEY).json())
+    r = client.post("/orders/batch", headers=KEY, json={"userId": "u001", "items": [
+        {"productId": "p03003", "quantity": 2},
+        {"productId": "p07002", "quantity": 1, "options": {"사이즈": "XL"}},
+    ]})
+    assert r.status_code == 200
+    body = r.json()
+    assert [o["totalPrice"] for o in body["orders"]] == [18_500 * 2 + 3_000, 16_900 + 2_000]
+    assert body["totalPrice"] == 40_000 + 18_900
+    assert len({o["orderId"] for o in body["orders"]}) == 2
+    assert len(client.get("/users/u001/orders", params={"limit": 50}, headers=KEY).json()) == before + 2
+
+
+def test_batch_order_is_all_or_nothing(client):
+    before = len(client.get("/users/u001/orders", params={"limit": 50}, headers=KEY).json())
+    missing = client.post("/orders/batch", headers=KEY, json={"userId": "u001", "items": [
+        {"productId": "p03003", "quantity": 1},
+        {"productId": "p07002", "quantity": 1},
+    ]})
+    assert missing.status_code == 422
+    d = missing.json()["detail"]
+    assert (d["index"], d["productId"], d["choices"]["사이즈"]) == (1, "p07002", ["M", "L", "XL"])
+    sold_out = client.post("/orders/batch", headers=KEY, json={"userId": "u001", "items": [{"productId": "p07003", "quantity": 1}]})
+    assert sold_out.status_code == 409 and sold_out.json()["detail"]["index"] == 0
+    # 앞 줄(p03003)도 주문되지 않았다
+    assert len(client.get("/users/u001/orders", params={"limit": 50}, headers=KEY).json()) == before
+    assert client.post("/orders/batch", headers=KEY, json={"userId": "u001", "items": []}).status_code == 422
