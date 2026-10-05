@@ -50,7 +50,6 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v7
-      - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with:
@@ -68,8 +67,8 @@ jobs:
         with:
           context: server
           push: true
-          # 홈서버 CPU 를 아직 확인하지 못해 둘 다 만든다. 알게 되면 하나로 줄여 빌드 시간을 아낀다
-          platforms: linux/amd64,linux/arm64
+          # 홈서버가 amd64(cloudflared 로그 GoArch: amd64)라 하나만 만든다. QEMU 에뮬레이션이 필요 없어 빌드가 빠르다
+          platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
