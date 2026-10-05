@@ -81,6 +81,20 @@ ORDER_ERRORS = {
     },
 }
 
+# 여러 상품 주문: 단건과 같은 오류에 문제가 된 줄(index·productId)이 붙는다
+BATCH_ORDER_ERRORS = {
+    404: {"model": OrderErrorOut, "description": "어떤 줄의 상품 id 가 없음. 아무것도 주문하지 않았습니다.",
+          "content": {"application/json": {"example": {"detail": {"message": "없는 상품: p99999", "index": 1, "productId": "p99999"}}}}},
+    409: {"model": OrderErrorOut, "description": "어떤 줄의 상품·옵션이 품절. 아무것도 주문하지 않았습니다.",
+          "content": {"application/json": {"example": {"detail": {
+              "message": "품절된 상품이다", "index": 0, "productId": "p05010"}}}}},
+    422: {"model": OrderErrorOut,
+          "description": "어떤 줄의 옵션이 빠졌거나 없는 값. 아무것도 주문하지 않았습니다. **앱은 `choices` 로 되묻습니다.**",
+          "content": {"application/json": {"example": {"detail": {
+              "message": "옵션을 골라야 한다", "missing": ["사이즈"], "choices": {"사이즈": ["M", "L", "XL"]},
+              "index": 1, "productId": "p07002"}}}}},
+}
+
 SORT_HELP = (
     "정렬. `relevance` 검색어 일치 점수순(기본) · `sales` 최근 30일 판매순 · `rating` 평점순 · "
     "`price_asc` 싼 순 · `price_desc` 비싼 순 · `discount` 할인율 큰 순 · "

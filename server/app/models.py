@@ -265,7 +265,7 @@ class SearchOut(BaseModel):
 
 class HealthOut(BaseModel):
     ok: bool
-    version: str = Field(examples=["0.4.2"])
+    version: str = Field(examples=["0.5.0"])
     products: int = Field(description="적재된 상품 수", examples=[2974])
 
 
@@ -292,6 +292,29 @@ class OrderOut(BaseModel):
     orderedAt: str = Field(description="주문 시각(KST, ISO 8601)")
 
 
+class OrderItemIn(BaseModel):
+    productId: str = Field(description="상품 id")
+    quantity: int = Field(ge=1, le=9, description="수량(1~9)")
+    options: dict[str, str] = Field(default_factory=dict, description="고른 옵션 {옵션 이름: 값}")
+
+
+class BatchOrderIn(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"examples": [
+        {"userId": "u001", "items": [
+            {"productId": "p01002", "quantity": 2},
+            {"productId": "p07002", "quantity": 1, "options": {"사이즈": "L"}},
+        ]},
+    ]})
+
+    userId: str = Field(min_length=1, max_length=40, description="사용자 id. 시연 사용자는 u001")
+    items: list[OrderItemIn] = Field(min_length=1, max_length=20, description="장바구니 줄(1~20)")
+
+
+class BatchOrderOut(BaseModel):
+    orders: list[OrderOut] = Field(description="줄마다 하나씩 만든 주문(요청 순서)")
+    totalPrice: int = Field(description="모든 줄 합계(원). 배송비는 줄마다 붙는다")
+
+
 class OrderErrorDetail(BaseModel):
     """주문 실패(422 옵션·409 품절·404) 본문의 detail. 앱 에이전트는 choices 로 되묻는다."""
 
@@ -301,6 +324,8 @@ class OrderErrorDetail(BaseModel):
     unknownOptions: list[str] = Field(default_factory=list, description="이 상품에 없는 옵션 이름")
     soldOut: list[str] = Field(default_factory=list, description="품절인 옵션 값")
     choices: dict[str, list[str]] = Field(default_factory=dict, description="지금 고를 수 있는 값 {옵션 이름: [값…]}")
+    index: int | None = Field(default=None, description="여러 상품 주문에서 문제가 된 줄의 순서(0부터)")
+    productId: str | None = Field(default=None, description="여러 상품 주문에서 문제가 된 줄의 상품 id")
 
 
 class OrderErrorOut(BaseModel):

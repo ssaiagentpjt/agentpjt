@@ -20,11 +20,11 @@ from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 
 from . import docs
-from .models import CategoryOut, HealthOut, OrderIn, OrderOut, ProductCompact, ProductOut, SearchOut
+from .models import BatchOrderIn, BatchOrderOut, CategoryOut, HealthOut, OrderIn, OrderOut, ProductCompact, ProductOut, SearchOut
 from .search import Audience, Sort, Tier
 from .store import DEFAULT_DATA_DIR, STATIC_DIR, OrderError, Store
 
-VERSION = "0.4.2"
+VERSION = "0.5.0"
 View = Literal["compact", "full"]
 log = logging.getLogger("shop")
 
@@ -145,6 +145,24 @@ def create_app(
             raise HTTPException(status_code=e.status, detail=e.detail) from e
         return OrderOut(orderId=order_id, userId=body.userId, productId=body.productId, productName=name,
                         quantity=body.quantity, options=body.options, totalPrice=total, orderedAt=at)
+
+    @app.post("/orders/batch", tags=["주문"], summary="여러 상품 한꺼번에 주문하기 (목업)", dependencies=auth,
+              responses={**docs.UNAUTHORIZED, **docs.BATCH_ORDER_ERRORS})
+    def place_batch(body: BatchOrderIn) -> BatchOrderOut:
+        """장바구니 결제용 목업 주문입니다. 모든 줄을 먼저 검사하고, **하나라도 안 되면 아무것도 주문하지 않습니다.**
+
+        - 검사는 단건 주문과 같습니다(없는 상품 404, 옵션 누락·잘못된 값 422 + `choices`, 품절 409)
+        - 실패하면 오류 본문에 문제가 된 줄의 `index`(0부터)와 `productId` 가 함께 옵니다
+        - 성공하면 줄마다 주문번호가 하나씩 생기고 구매 이력에도 줄마다 남습니다
+        """
+        try:
+            placed = store.place_batch(body.userId, [(i.productId, i.quantity, i.options) for i in body.items])
+        except OrderError as e:
+            raise HTTPException(status_code=e.status, detail=e.detail) from e
+        orders = [OrderOut(orderId=oid, userId=body.userId, productId=i.productId, productName=name,
+                           quantity=i.quantity, options=i.options, totalPrice=total, orderedAt=at)
+                  for i, (oid, name, total, at) in zip(body.items, placed, strict=True)]
+        return BatchOrderOut(orders=orders, totalPrice=sum(o.totalPrice for o in orders))
 
     @app.get("/users/{user_id}/orders", tags=["주문"], summary="구매 이력", dependencies=auth, responses=docs.UNAUTHORIZED)
     def orders(
