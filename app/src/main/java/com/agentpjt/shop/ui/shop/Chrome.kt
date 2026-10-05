@@ -1,5 +1,8 @@
 package com.agentpjt.shop.ui.shop
 
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -37,6 +40,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -217,9 +222,11 @@ private fun NavButton(label: String, on: Boolean, bump: Boolean, badge: Int, onC
             icon(fg)
             Text(label, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = fg)
         }
+        // 개수가 바뀌면(bump) 뱃지가 한 번 튄다. AI 가 판단 도중에 담아도 눈에 띄게
+        val pop by animateFloatAsState(if (bump) 1.35f else 1f, spring(dampingRatio = Spring.DampingRatioMediumBouncy), label = "badge")
         if (badge > 0) {
             Box(
-                Modifier.align(Alignment.TopEnd).offset(x = 6.dp, y = (-8).dp).size(28.dp).clip(CircleShape).background(c.voice),
+                Modifier.align(Alignment.TopEnd).offset(x = 6.dp, y = (-8).dp).scale(pop).size(28.dp).clip(CircleShape).background(c.voice),
                 contentAlignment = Alignment.Center,
             ) { Text("$badge", fontSize = 15.sp, fontWeight = FontWeight.Black, color = c.voiceInk) }
         }
@@ -263,14 +270,19 @@ private fun TalkStrip(s: ShopState) {
 fun MicDock(s: ShopState, onMic: () -> Unit, label: String = "누르고 말하기") {
     val c = ShopTheme.colors
     val ready = s.ai == AiStatus.READY && !s.agentBusy
+    // 앱을 켜고 AI 를 올리는 동안(약 10초) 버튼이 막힌 이유가 보이게 깜빡인다
+    val loading = s.ai == AiStatus.LOADING && !s.setup.later
+    val pulse = if (loading) rememberPulse().value else 1f
     Button(
         onClick = onMic, enabled = ready,
         modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp),
         shape = RoundedCornerShape(20.dp),
         colors = ButtonDefaults.buttonColors(containerColor = c.voice, contentColor = c.voiceInk),
     ) {
-        MicIcon(if (ready) c.voiceInk else c.inkSoft, Modifier.size(30.dp))
+        MicIcon(if (ready) c.voiceInk else c.inkSoft, Modifier.size(30.dp).graphicsLayer { alpha = pulse })
         Text(
+            modifier = Modifier.graphicsLayer { alpha = pulse },
+            text =
             "  " + when {
                 s.ai == AiStatus.READY -> label
                 s.setup.later -> "AI 파일을 받는 중이에요"

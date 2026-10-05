@@ -5,6 +5,8 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -82,8 +84,9 @@ fun ShopApp(vm: ShopViewModel = viewModel()) {
             openTyping = vm::openTyping, closeTyping = vm::closeTyping, sendTyped = vm::submitTyped, help = vm::openHelp,
         )
         if (s.helpOpen) HelpSheet(enabled = s.ai == AiStatus.READY && !s.agentBusy, onExample = vm::tryExample, onClose = vm::closeHelp)
-        Box(Modifier.weight(1f)) {
-            when (s.screen) {
+        // 화면이 뚝 바뀌면 무엇이 바뀌었는지 놓치기 쉬워서 짧게 겹쳐 바꾼다. 움직임이 큰 미끄러짐은 쓰지 않는다
+        Crossfade(s.screen, Modifier.weight(1f), animationSpec = tween(200), label = "screen") { screen ->
+            when (screen) {
                 Screen.Home -> HomeScreen(s, nav, onMic = onMic, onLink = vm::openLink)
                 Screen.Listening -> ListeningScreen(s, nav, pauseUntil, onDone = vm::finishListening, onCancel = vm::cancelListening)
                 Screen.Results -> ResultsScreen(s, nav, speaking, onPick = vm::pick, onAdd = vm::addShown, onStopReading = vm::stopReading, onMic = onMic)

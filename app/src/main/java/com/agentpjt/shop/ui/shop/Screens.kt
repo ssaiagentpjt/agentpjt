@@ -1,6 +1,10 @@
 package com.agentpjt.shop.ui.shop
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -35,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -47,6 +52,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -160,16 +166,33 @@ private fun linkLabel(link: ChatLink) = when (link) {
 fun ListeningScreen(s: ShopState, nav: Nav, pauseUntil: Long, onDone: () -> Unit, onCancel: () -> Unit) {
     val c = ShopTheme.colors
     if (s.agentBusy) {
+        // 한 단계에 5~7초가 걸린다. 지금 단계는 깜빡이고 초가 올라가서 멈춘 것처럼 보이지 않게 한다
+        val pulse by rememberPulse()
+        var seconds by remember { mutableIntStateOf(0) }
+        LaunchedEffect(Unit) { while (true) { delay(1000); seconds++ } }
         Frame(s, nav, dock = { BigButton("그만", onCancel, primary = false) }) {
             Title("찾고 있어요")
+            // 짧은 판단에서 숫자가 깜빡 보였다 사라지지 않게 3초부터 보인다
+            Text(
+                if (seconds >= 3) "${seconds}초째 생각하고 있어요" else " ",
+                fontSize = 17.sp, color = c.inkSoft, style = TextStyle(fontFeatureSettings = "tnum"),
+            )
             s.steps.forEachIndexed { i, step ->
                 val now = i == s.steps.lastIndex
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Box(
-                        Modifier.size(32.dp).clip(CircleShape).background(if (now) c.voice else c.ok),
-                        contentAlignment = Alignment.Center,
-                    ) { Text(if (now) "…" else "✓", color = c.surface, fontSize = 17.sp, fontWeight = FontWeight.Black) }
-                    Text(if (now) step.doing else step.done, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = if (now) c.voice else c.ink)
+                val appear = remember { MutableTransitionState(false).apply { targetState = true } }
+                AnimatedVisibility(appear, enter = fadeIn(tween(300)) + slideInVertically(tween(300)) { it / 2 }) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Box(
+                            Modifier.size(32.dp).clip(CircleShape).background(if (now) c.voice else c.ok),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (now) ThinkingDots() else Text("✓", color = c.surface, fontSize = 17.sp, fontWeight = FontWeight.Black)
+                        }
+                        Text(
+                            if (now) step.doing else step.done, Modifier.graphicsLayer { alpha = if (now) pulse else 1f },
+                            fontSize = 20.sp, fontWeight = FontWeight.Bold, color = if (now) c.voice else c.ink,
+                        )
+                    }
                 }
             }
         }
@@ -212,6 +235,19 @@ private fun PauseBar(pauseUntil: Long) {
     }
     Box(Modifier.fillMaxWidth().height(12.dp).clip(RoundedCornerShape(50)).background(c.paper)) {
         Box(Modifier.fillMaxHeight().fillMaxWidth(left).clip(RoundedCornerShape(50)).background(c.voice))
+    }
+}
+
+/** 지금 단계 동그라미 안의 점 셋. 차례로 튄다 */
+@Composable
+private fun ThinkingDots() {
+    val c = ShopTheme.colors
+    val t = rememberInfiniteTransition(label = "dots")
+    Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
+        (0..2).forEach { i ->
+            val y by t.animateFloat(2f, -3f, infiniteRepeatable(tween(400, delayMillis = i * 150), RepeatMode.Reverse), label = "dot$i")
+            Box(Modifier.graphicsLayer { translationY = y * density }.size(5.dp).clip(CircleShape).background(c.surface))
+        }
     }
 }
 

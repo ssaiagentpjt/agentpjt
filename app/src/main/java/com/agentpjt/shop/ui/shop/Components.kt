@@ -26,6 +26,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -91,6 +92,11 @@ fun MicIcon(tint: Color, modifier: Modifier = Modifier) {
         drawPath(p, tint, style = stroke)
     }
 }
+
+/** 숨 쉬듯 깜빡이는 투명도(0.45↔1, 1.2초). 기다리는 동안 화면이 멈춘 것처럼 보이지 않게 한다 */
+@Composable
+fun rememberPulse(): State<Float> =
+    rememberInfiniteTransition(label = "pulse").animateFloat(0.45f, 1f, infiniteRepeatable(tween(1200), RepeatMode.Reverse), label = "pulse")
 
 /** 지금 읽고 있다는 노란 띠. 막대 셋이 오르내린다. */
 @Composable
