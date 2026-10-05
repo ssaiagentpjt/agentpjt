@@ -1,8 +1,13 @@
 package com.agentpjt.shop.agent
 
-import com.agentpjt.shop.shop.MockCatalog
+import com.agentpjt.shop.FakeShopApi
+import com.agentpjt.shop.TestData
+import com.agentpjt.shop.api.ApiResult
+import com.agentpjt.shop.api.OrderDto
+import com.agentpjt.shop.api.SearchDto
 import com.agentpjt.shop.shop.Screen
 import com.agentpjt.shop.shop.ShopState
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -10,79 +15,108 @@ import org.junit.Test
 
 class ToolExecutorTest {
 
-    private val catalog = MockCatalog()
-    private val exec = ToolExecutor(catalog)
+    private val api = FakeShopApi().apply {
+        searchResult = ApiResult.Ok(SearchDto("무릎", 2, listOf(
+            TestData.compact("p07002", "무릎 보호대 2개입", 16900, mapOf("사이즈" to listOf("M", "L", "XL"))),
+            TestData.compact("p03005", "무릎 전용 핫팩 파스 12매", 15800),
+        )))
+        products["p07002"] = TestData.knee
+        products["p07001"] = TestData.cane
+    }
+    private val exec = ToolExecutor(api)
     private val home = ShopState()
 
-    @Suppress("UNCHECKED_CAST")
-    private fun products(response: Map<String, Any?>) = response["products"] as List<Map<String, Any?>>
+    private suspend fun detail(): ShopState = exec.execute(Action.Open("p07002"), home).state
 
     @Test
-    fun getProducts_appliesPriceCapOnly() {
-        val all = exec.execute("getProducts", mapOf("category" to "파스·찜질"), home)
-        val capped = exec.execute("getProducts", mapOf("category" to "파스·찜질", "maxPrice" to 13_000.0), home)
-        assertEquals(4, products(all.response).size)
-        assertEquals(listOf("p01", "p03"), products(capped.response).map { it["id"] })
-        assertEquals("구천구백 원", products(capped.response)[0]["priceSpoken"])
-        assertFalse(all.navigated)
+    fun search_cachesCandidates_remembersThem_andReturnsPlainResult() = runTest {
+        val out = exec.execute(Action.Search("무릎", maxPrice = 20000, sort = "sales"), home)
+        assertEquals(listOf("p07002", "p03005"), out.state.candidates.map { it.id })
+        assertEquals(listOf("p07002", "p03005"), out.state.known.map { it.id })
+        assertEquals(20000, api.searches.single().maxPrice)
+        assertTrue(out.result, out.result.startsWith("(앱) '무릎' 검색 결과 2개 중 2개"))
+        assertTrue(out.result, out.result.contains("p07002 무릎 보호대 2개입 · 만 육천구백 원"))
     }
 
     @Test
-    fun getProducts_unknownCategory_listsValidOnes() {
-        val out = exec.execute("get_products", mapOf("category" to "파스"), home)
-        assertEquals(false, out.response["ok"])
-        assertTrue(out.response["error"].toString().contains("파스·찜질"))
+    fun show_movesToResults_onlyWithCandidates() = runTest {
+        val searched = exec.execute(Action.Search("무릎"), home).state
+        assertFalse(exec.execute(Action.Show(listOf("p99999"), "무릎"), searched).ok)
+        val ok = exec.execute(Action.Show(listOf("p03005", "p07002"), "무릎"), searched)
+        assertEquals(Screen.Results, ok.state.screen)
+        assertEquals(listOf("p03005", "p07002"), ok.state.shown.map { it.id })
     }
 
     @Test
-    fun showProducts_navigatesWithChosenOrder() {
-        val out = exec.execute("show_products", mapOf("product_ids" to listOf("p03", "p01"), "label" to "무릎 파스"), home)
-        assertTrue(out.navigated)
-        assertEquals(Screen.Results, out.state.screen)
-        assertEquals(listOf("p03", "p01"), out.state.shown.map { it.id })
-        assertEquals("무릎 파스", out.state.label)
+    fun open_resetsSelection_andRemembersProduct() = runTest {
+        val out = exec.execute(Action.Open("p07002"), home.copy(selected = mapOf("색상" to "검정"), qty = 3))
+        assertEquals(Screen.Detail, out.state.screen)
+        assertTrue(out.state.selected.isEmpty())
+        assertEquals(1, out.state.qty)
+        assertEquals("p07002", out.state.known.first().id)
     }
 
     @Test
-    fun showProducts_rejectsUnknownIds() {
-        val out = exec.execute("showProducts", mapOf("productIds" to listOf("p01", "x99"), "label" to "a"), home)
-        assertFalse(out.navigated)
-        assertEquals(Screen.Home, out.state.screen)
+    fun option_rejectsSoldOutValue() = runTest {
+        val s = detail()
+        assertFalse(exec.execute(Action.Option("사이즈", "3XL"), s).ok)
+        assertEquals(mapOf("사이즈" to "XL"), exec.execute(Action.Option("사이즈", "XL"), s).state.selected)
     }
 
     @Test
-    fun setQuantity_needsProductAndRange() {
-        assertEquals(false, exec.execute("setQuantity", mapOf("count" to 2), home).response["ok"])
-        val detail = exec.execute("openProduct", mapOf("productId" to "p02"), home).state
-        assertEquals(false, exec.execute("setQuantity", mapOf("count" to 12), detail).response["ok"])
-        assertEquals(3, exec.execute("setQuantity", mapOf("count" to 3L), detail).state.qty)
+    fun order_withMissingOption_staysOnDetailWithChoices() = runTest {
+        val out = exec.execute(Action.Order(), detail())
+        assertFalse(out.ok)
+        assertEquals(Screen.Detail, out.state.screen)
+        assertEquals(listOf("M", "L", "XL"), out.choices["사이즈"])
     }
 
     @Test
-    fun placeOrder_onlyFromConfirmScreen() {
-        val detail = exec.execute("openProduct", mapOf("productId" to "p02"), home).state
-        val refused = exec.execute("placeOrder", emptyMap(), detail)
-        assertEquals(false, refused.response["ok"])
-        assertEquals(Screen.Detail, refused.state.screen)
-
-        val confirm = exec.execute("requestOrder", mapOf("productId" to "p02", "quantity" to 2), detail).state
-        assertEquals(Screen.Confirm, confirm.screen)
-        // 확인 화면에서 "말로 하기"를 누른 상태
-        val listening = confirm.copy(screen = Screen.Listening, returnTo = Screen.Confirm)
-        val done = exec.execute("place_order", emptyMap(), listening)
+    fun orderFlow_confirmThenPlace_sendsOptionsAndQty() = runTest {
+        var s = exec.execute(Action.Option("사이즈", "XL"), detail()).state
+        s = exec.execute(Action.Order(quantity = 2), s).state
+        assertEquals(Screen.Confirm, s.screen)
+        val done = exec.execute(Action.Place, s)
         assertEquals(Screen.Done, done.state.screen)
-        assertTrue(done.state.orderId!!.startsWith("M-20261003-"))
+        assertEquals("M-20261005-1234", done.state.orderId)
+        assertEquals(mapOf("사이즈" to "XL"), api.orders.single().options)
+        assertEquals(2, api.orders.single().quantity)
     }
 
     @Test
-    fun unknownTool_isReportedNotThrown() {
-        assertEquals(false, exec.execute("deleteEverything", emptyMap(), home).response["ok"])
+    fun place_andCancel_onlyOnConfirm() = runTest {
+        val s = detail()
+        assertFalse(exec.execute(Action.Place, s).ok)
+        assertFalse(exec.execute(Action.Cancel, s).ok)
+        assertTrue(api.orders.isEmpty())
+        val confirm = exec.execute(Action.Open("p07001"), home).state.copy(screen = Screen.Listening, returnTo = Screen.Confirm)
+        assertEquals(Screen.Detail, exec.execute(Action.Cancel, confirm).state.screen)
+        assertEquals(Screen.Done, exec.execute(Action.Place, confirm).state.screen)
     }
 
     @Test
-    fun describeScreen_listsShownProductsWithNumbers() {
-        val shown = exec.execute("showProducts", mapOf("productIds" to listOf("p01", "p02")), home).state
-        val line = describeScreen(shown.copy(screen = Screen.Listening, returnTo = Screen.Results))
-        assertTrue(line, line.startsWith("[화면 추천 목록 | 1) p01 쿨 파스 20매 9,900원 / 2) p02"))
+    fun place_serverOptionError_goesBackToDetailWithChoices() = runTest {
+        api.orderResult = FakeShopApi.optionError(409, mapOf("사이즈" to listOf("M", "L")))
+        val s = detail().copy(screen = Screen.Confirm, selected = mapOf("사이즈" to "XL"))
+        val out = exec.execute(Action.Place, s)
+        assertEquals(Screen.Detail, out.state.screen)
+        assertTrue(out.state.selected.isEmpty())
+        assertEquals(listOf("M", "L"), out.choices["사이즈"])
+    }
+
+    @Test
+    fun history_remembersPastProducts() = runTest {
+        api.history = ApiResult.Ok(listOf(OrderDto("M-1", "u001", "p01001", "햅쌀 10kg", 1, emptyMap(), 34900, "2026-09-12T10:00:00+09:00")))
+        val out = exec.execute(Action.History, home)
+        assertTrue(out.result, out.result.contains("2026-09-12 p01001 햅쌀 10kg 1개"))
+        assertEquals("p01001", out.state.known.single().id)
+    }
+
+    @Test
+    fun offline_isReported() = runTest {
+        api.offline = true
+        val out = exec.execute(Action.Search("쌀"), home)
+        assertTrue(out.offline)
+        assertTrue(out.state.offline)
     }
 }

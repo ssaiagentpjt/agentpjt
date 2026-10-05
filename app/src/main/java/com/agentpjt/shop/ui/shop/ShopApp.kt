@@ -55,13 +55,17 @@ fun ShopApp(vm: ShopViewModel = viewModel()) {
             Notice("읽어 주기를 쓸 수 없어요. 휴대폰 설정의 글자 읽어주기(TTS)에서 한국어 음성을 설치해 주세요.")
         }
         if (s.micDenied) Notice("말로 하려면 마이크 권한이 필요해요. 화면을 눌러서도 이용할 수 있어요.")
+        if (s.offline) Notice("인터넷에 연결되지 않아 상품을 불러오지 못했어요. 연결을 확인해 주세요.")
         Box(Modifier.weight(1f)) {
             when (s.screen) {
-                Screen.Home -> HomeScreen(s, onMic = onMic, onExample = vm::submitText, onDevMenu = vm::openDevMenu, onToggleThinking = vm::toggleThinking)
+                Screen.Home -> HomeScreen(s, onMic = onMic, onExample = vm::submitText, onDevMenu = vm::openDevMenu)
                 Screen.Listening -> ListeningScreen(s, onDone = vm::finishListening, onCancel = vm::cancelListening)
                 Screen.Results -> ResultsScreen(s, speaking, onPick = vm::pick, onStopReading = vm::stopReading, onMic = onMic)
-                Screen.Detail -> DetailScreen(s, onQty = vm::changeQty, onOrder = { vm.go(Screen.Confirm) }, onOthers = { vm.go(Screen.Results) }, onMic = onMic)
-                Screen.Confirm -> ConfirmScreen(s, onYes = vm::placeOrder, onNo = { vm.go(Screen.Detail) }, onMic = onMic)
+                Screen.Detail -> DetailScreen(
+                    s, onQty = vm::changeQty, onOption = vm::chooseOption, onOrder = vm::order,
+                    onOthers = { vm.go(Screen.Results) }, onMic = onMic,
+                )
+                Screen.Confirm -> ConfirmScreen(s, onYes = vm::placeOrder, onNo = vm::cancelOrder, onMic = onMic)
                 Screen.Done -> DoneScreen(s, onHome = { vm.go(Screen.Home) })
                 Screen.DevLlm -> LlmTestScreen()
             }
