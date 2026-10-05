@@ -332,3 +332,36 @@ class OrderErrorDetail(BaseModel):
 
 class OrderErrorOut(BaseModel):
     detail: OrderErrorDetail
+
+# ---- 주문 2단계 (prepare → confirm) ----------------------------------------
+
+
+class PreparedItemOut(BaseModel):
+    productId: str
+    productName: str
+    options: dict[str, str]
+    quantity: int
+    unitPrice: int = Field(description="단가(원) = 가격 + 고른 옵션의 추가 금액")
+    shippingFee: int
+    totalPrice: int = Field(description="단가 × 수량 + 배송비")
+
+
+class PrepareOut(BaseModel):
+    confirmToken: str = Field(description="주문 확정에 쓰는 1회용 토큰. 사용자가 동의하면 /orders/confirm 에 보낸다")
+    expiresAt: str = Field(description="토큰 만료 시각(KST, ISO 8601). 10분 뒤")
+    items: list[PreparedItemOut]
+    totalPrice: int = Field(description="모든 줄 합계(원)")
+    totalSpoken: str = Field(description="합계를 읽는 말", examples=["만 칠천팔백 원"])
+
+
+class ConfirmIn(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"examples": [{"userId": "u001", "confirmToken": "prepare 응답의 confirmToken"}]})
+
+    userId: str = Field(min_length=1, max_length=40, description="prepare 를 부른 사용자 id")
+    confirmToken: str = Field(max_length=100, description="prepare 응답의 confirmToken")
+
+
+class ConfirmOut(BaseModel):
+    orders: list[OrderOut] = Field(description="줄마다 하나씩 만든 주문(prepare 의 줄 순서)")
+    totalPrice: int
+    alreadyConfirmed: bool = Field(description="이미 확정된 토큰이면 true. 새 주문 없이 그때 만든 주문을 그대로 돌려준다")

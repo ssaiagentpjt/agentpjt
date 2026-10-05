@@ -88,14 +88,32 @@ create table if not exists stock_ledger (
   id integer primary key, productId text not null, delta integer not null,
   orderId text not null, reason text not null, at text not null);  -- reason: ORDER · CANCEL
 create index if not exists stock_ledger_order on stock_ledger(orderId);
+-- 주문 확인 토큰(prepare → confirm). 1회용이고 10분 뒤 만료된다. items 는 prepare 때 검사한 줄(JSON)이며
+-- confirm 은 이 금액으로 확정한다(사용자가 듣고 동의한 금액)
+create table if not exists order_tokens (
+  token text primary key, userId text not null, items text not null, totalPrice integer not null,
+  status text not null,  -- PENDING · USED · REVOKED
+  createdAt text not null, expiresAt text not null);
 """
+
+# 옛 DB 파일에 없을 수 있는 orders 컬럼. 새 DB 도 같은 길로 덧붙여 한 곳에서 관리한다
+_ORDER_COLUMNS = [
+    ("options", "text not null default '{}'"),
+    ("status", "text not null default 'CONFIRMED'"),  # CONFIRMED · CANCELLED · DELIVERED(시드의 지난 주문)
+    ("token", "text"),  # 어느 확인 토큰으로 만든 주문인지. 같은 토큰을 다시 confirm 하면 이걸로 찾아 돌려준다
+    ("unitPrice", "integer"),  # 주문 때 단가(가격 + 옵션 추가 금액). 재주문의 가격 변동 비교에 쓴다
+    ("shippingFee", "integer"),
+    ("cancelledAt", "text"),
+]
 
 
 def migrate_orders(conn: sqlite3.Connection) -> None:
     """주문 테이블은 재시작해도 남으므로, 옛 DB 파일에 없는 컬럼을 덧붙인다."""
     cols = {r[1] for r in conn.execute("pragma table_info(orders)")}
-    if "options" not in cols:
-        conn.execute("alter table orders add column options text not null default '{}'")
+    for name, ddl in _ORDER_COLUMNS:
+        if name not in cols:
+            conn.execute(f"alter table orders add column {name} {ddl}")
+    conn.execute("create index if not exists orders_token on orders(token)")
 
 
 def load_categories(data_dir: Path) -> list[MainSeed]:

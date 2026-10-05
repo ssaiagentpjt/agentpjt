@@ -1,5 +1,7 @@
 """주문 흐름: 오류 code, 재고, prepare → confirm 2단계, 취소, 요약. 픽스처 상품 28개를 쓴다."""
 
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -8,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.delivery import KST
 from app.main import create_app
+from app.store import Store
 
 FIXTURES = Path(__file__).parent / "fixtures"
 KEY = {"X-API-Key": "k"}
@@ -116,3 +119,127 @@ def test_stock_survives_restart(db_path, clock):
     assert order(c1, "p03007", qty=5).status_code == 200
     c2 = TestClient(create_app(data_dir=FIXTURES, db_path=db_path, api_key="k", clock=clock))
     assert stock(c2, "p03007") == {"status": "low", "quantity": 3}
+
+
+# ---- 2단계 주문 (G-04) · 중복 방지 (G-01) ----
+
+
+def prepare(client, *items, user="u1"):
+    return client.post("/orders/prepare", headers=KEY, json={"userId": user, "items": [
+        {"productId": pid, "quantity": qty, "options": opts} for pid, qty, opts in items]})
+
+
+def confirm(client, token, user="u1"):
+    return client.post("/orders/confirm", headers=KEY, json={"userId": user, "confirmToken": token})
+
+
+def history(client, user="u1"):
+    return client.get(f"/users/{user}/orders", headers=KEY).json()
+
+
+def test_prepare_alone_creates_no_order(client):
+    before = stock(client, "p07002")["quantity"]
+    r = prepare(client, ("p07002", 2, {"사이즈": "XL"}), ("p03003", 1, {}))
+    body = r.json()
+    assert r.status_code == 200 and body["confirmToken"]
+    assert body["expiresAt"] == "2026-10-05T14:10:00+09:00"
+    assert [(x["productId"], x["unitPrice"], x["totalPrice"]) for x in body["items"]] == [
+        ("p07002", 16_900 + 2_000, (16_900 + 2_000) * 2), ("p03003", 18_500, 18_500 + 3_000)]
+    assert body["totalPrice"] == 37_800 + 21_500 and body["totalSpoken"] == "오만 구천삼백 원"
+    assert history(client) == []
+    assert stock(client, "p07002")["quantity"] == before
+
+
+def test_prepare_reports_bad_line(client):
+    r = prepare(client, ("p03003", 1, {}), ("p07002", 1, {}))
+    d = r.json()["detail"]
+    assert (r.status_code, d["code"], d["index"], d["choices"]["사이즈"]) == (422, "MISSING_OPTION", 1, ["M", "L", "XL"])
+
+
+def test_confirm_creates_orders_and_reduces_stock(client):
+    before = stock(client, "p03003")["quantity"]
+    token = prepare(client, ("p03003", 2, {})).json()["confirmToken"]
+    r = confirm(client, token)
+    body = r.json()
+    assert r.status_code == 200 and body["alreadyConfirmed"] is False
+    assert [(o["productId"], o["quantity"], o["totalPrice"]) for o in body["orders"]] == [("p03003", 2, 18_500 * 2 + 3_000)]
+    assert [o["orderId"] for o in history(client)] == [body["orders"][0]["orderId"]]
+    assert stock(client, "p03003")["quantity"] == before - 2
+
+
+@pytest.mark.parametrize("token", ["", "made-up-token", "q3V0aGVyZQ"])
+def test_unknown_token_is_rejected(client, token):
+    prepare(client, ("p03003", 1, {}))
+    r = confirm(client, token)
+    assert (r.status_code, r.json()["detail"]["code"]) == (404, "TOKEN_NOT_FOUND")
+    assert history(client) == []
+
+
+def test_same_token_twice_returns_same_order(client):
+    before = stock(client, "p03003")["quantity"]
+    token = prepare(client, ("p03003", 1, {})).json()["confirmToken"]
+    first, again = confirm(client, token).json(), confirm(client, token).json()
+    assert again["alreadyConfirmed"] is True
+    assert again["orders"] == first["orders"]
+    assert len(history(client)) == 1
+    assert stock(client, "p03003")["quantity"] == before - 1
+
+
+def test_concurrent_confirms_make_one_order(tmp_path, clock):
+    store = Store(FIXTURES, str(tmp_path / "c.db"), clock)
+    before = store.conn.execute("select stock_qty from products where id = 'p03003'").fetchone()[0]
+    token, _, _ = store.prepare("u1", [("p03003", 1, {})])
+    with ThreadPoolExecutor(5) as pool:
+        results = list(pool.map(lambda _: store.confirm("u1", token), range(5)))
+    assert sum(not already for _, already in results) == 1
+    assert len({rows[0]["orderId"] for rows, _ in results}) == 1
+    assert store.conn.execute("select count(*) from orders where userId = 'u1'").fetchone()[0] == 1
+    assert store.conn.execute("select count(*) from stock_ledger").fetchone()[0] == 1
+    assert store.conn.execute("select stock_qty from products where id = 'p03003'").fetchone()[0] == before - 1
+
+
+def test_token_expires_after_ten_minutes(client, clock):
+    token = prepare(client, ("p03003", 1, {})).json()["confirmToken"]
+    clock.advance(minutes=10)
+    r = confirm(client, token)
+    assert (r.status_code, r.json()["detail"]["code"]) == (410, "TOKEN_EXPIRED")
+    assert history(client) == []
+
+
+def test_token_just_before_expiry_still_works(client, clock):
+    token = prepare(client, ("p03003", 1, {})).json()["confirmToken"]
+    clock.advance(minutes=9, seconds=59)
+    assert confirm(client, token).status_code == 200
+
+
+def test_new_prepare_revokes_previous_token(client):
+    old = prepare(client, ("p03003", 1, {})).json()["confirmToken"]
+    new = prepare(client, ("p03003", 2, {})).json()["confirmToken"]
+    r = confirm(client, old)
+    assert (r.status_code, r.json()["detail"]["code"]) == (409, "TOKEN_REVOKED")
+    assert confirm(client, new).json()["orders"][0]["quantity"] == 2
+
+
+def test_other_users_token_is_rejected(client):
+    token = prepare(client, ("p03003", 1, {}), user="u1").json()["confirmToken"]
+    r = confirm(client, token, user="u2")
+    assert (r.status_code, r.json()["detail"]["code"]) == (404, "TOKEN_NOT_FOUND")
+    assert history(client, "u1") == [] and history(client, "u2") == []
+
+
+def test_confirm_rechecks_stock(client):
+    # 재고 8개 상품을 5개 확인해 둔 사이 다른 사람이 4개를 사 갔다
+    token = prepare(client, ("p03007", 5, {})).json()["confirmToken"]
+    assert order(client, "p03007", qty=4, user="u2").status_code == 200
+    r = confirm(client, token)
+    d = r.json()["detail"]
+    assert (r.status_code, d["code"], d["available"], d["index"]) == (409, "OUT_OF_STOCK", 4, 0)
+    assert history(client) == []
+
+
+def test_confirm_keeps_prepared_price(client, db_path):
+    # prepare 뒤 가격이 바뀌어도 사용자가 듣고 동의한 금액으로 확정한다
+    token = prepare(client, ("p03003", 1, {})).json()["confirmToken"]
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("update products set price = 99000 where id = 'p03003'")
+    assert confirm(client, token).json()["orders"][0]["totalPrice"] == 18_500 + 3_000

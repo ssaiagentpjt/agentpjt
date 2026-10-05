@@ -21,9 +21,24 @@ from fastapi import Path as PathParam
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 
-from . import docs
-from .models import BatchOrderIn, BatchOrderOut, CategoryOut, HealthOut, OrderIn, OrderOut, ProductCompact, ProductOut, SearchOut
+from . import docs, order_docs
+from .models import (
+    BatchOrderIn,
+    BatchOrderOut,
+    CategoryOut,
+    ConfirmIn,
+    ConfirmOut,
+    HealthOut,
+    OrderIn,
+    OrderOut,
+    PreparedItemOut,
+    PrepareOut,
+    ProductCompact,
+    ProductOut,
+    SearchOut,
+)
 from .search import Audience, Sort, Tier
+from .speech import read_won
 from .store import DEFAULT_DATA_DIR, STATIC_DIR, OrderError, Store, now_kst
 
 VERSION = "0.5.0"
@@ -49,7 +64,7 @@ def create_app(
         title="손주야 목업 상품 API",
         version=VERSION,
         summary=docs.SUMMARY,
-        description=docs.DESCRIPTION,
+        description=docs.DESCRIPTION + order_docs.FLOW,
         openapi_tags=docs.TAGS,
         swagger_ui_parameters=docs.SWAGGER_UI,
     )
@@ -166,6 +181,28 @@ def create_app(
                            quantity=i.quantity, options=i.options, totalPrice=total, orderedAt=at)
                   for i, (oid, name, total, at) in zip(body.items, placed, strict=True)]
         return BatchOrderOut(orders=orders, totalPrice=sum(o.totalPrice for o in orders))
+
+    @app.post("/orders/prepare", tags=["주문"], dependencies=auth, **{**order_docs.PREPARE, "responses": {
+        **docs.UNAUTHORIZED, **order_docs.PREPARE["responses"]}})
+    def prepare_order(body: BatchOrderIn) -> PrepareOut:
+        try:
+            token, expires, lines = store.prepare(body.userId, [(i.productId, i.quantity, i.options) for i in body.items])
+        except OrderError as e:
+            raise HTTPException(status_code=e.status, detail=e.detail) from e
+        items = [PreparedItemOut(productId=x.product_id, productName=x.name, options=x.options, quantity=x.quantity,
+                                 unitPrice=x.unit_price, shippingFee=x.shipping_fee, totalPrice=x.total) for x in lines]
+        total = sum(x.totalPrice for x in items)
+        return PrepareOut(confirmToken=token, expiresAt=expires, items=items, totalPrice=total, totalSpoken=read_won(total))
+
+    @app.post("/orders/confirm", tags=["주문"], dependencies=auth, **{**order_docs.CONFIRM, "responses": {
+        **docs.UNAUTHORIZED, **order_docs.CONFIRM["responses"]}})
+    def confirm_order(body: ConfirmIn) -> ConfirmOut:
+        try:
+            rows, already = store.confirm(body.userId, body.confirmToken)
+        except OrderError as e:
+            raise HTTPException(status_code=e.status, detail=e.detail) from e
+        orders = [OrderOut(**r) for r in rows]
+        return ConfirmOut(orders=orders, totalPrice=sum(o.totalPrice for o in orders), alreadyConfirmed=already)
 
     @app.get("/users/{user_id}/orders", tags=["주문"], summary="구매 이력", dependencies=auth, responses=docs.UNAUTHORIZED)
     def orders(

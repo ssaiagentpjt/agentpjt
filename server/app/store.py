@@ -2,11 +2,12 @@
 
 import json
 import random
+import secrets
 import sqlite3
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import db
@@ -69,6 +70,7 @@ def now_kst() -> datetime:
 
 
 LOW_STOCK = 20  # validate.py 와 같은 기준: 1~20 이면 low(품절 임박), 21 이상이면 in_stock
+TOKEN_TTL = timedelta(minutes=10)  # 확인 화면에서 금액을 듣고 답하기에 충분하고, 오래된 확인으로 주문되지 않을 만큼
 
 
 def stock_status(quantity: int) -> str:
@@ -330,16 +332,17 @@ class Store:
         self.conn.execute("insert into stock_ledger (productId, delta, orderId, reason, at) values (?, ?, ?, ?, ?)",
                           (product_id, delta, order_id, reason, now.isoformat(timespec="seconds")))
 
-    def _insert_order(self, user_id: str, line: Line, now: datetime) -> str:
+    def _insert_order(self, user_id: str, line: Line, now: datetime, token: str | None = None) -> str:
         """주문 한 줄을 넣고 재고를 줄인 뒤 주문번호를 돌려준다. 커밋은 부른 쪽이 한다."""
         opts = json.dumps(line.options, ensure_ascii=False)
         for _ in range(20):
             order_id = f"M-{now:%Y%m%d}-{random.randint(1000, 9999)}"
             try:
                 self.conn.execute(
-                    "insert into orders (orderId, userId, productId, quantity, totalPrice, orderedAt, options)"
-                    " values (?, ?, ?, ?, ?, ?, ?)",
-                    (order_id, user_id, line.product_id, line.quantity, line.total, now.isoformat(timespec="seconds"), opts))
+                    "insert into orders (orderId, userId, productId, quantity, totalPrice, orderedAt, options,"
+                    " token, unitPrice, shippingFee) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (order_id, user_id, line.product_id, line.quantity, line.total, now.isoformat(timespec="seconds"), opts,
+                     token, line.unit_price, line.shipping_fee))
                 break
             except sqlite3.IntegrityError:
                 continue  # 같은 날 주문번호가 겹치면 다시 뽑는다
@@ -376,13 +379,78 @@ class Store:
                 raise
         return out
 
-    def orders_of(self, user_id: str, limit: int) -> list[dict]:
+    # ---- 주문 2단계: prepare → confirm ----
+
+    def prepare(self, user_id: str, items: list[tuple[str, int, dict[str, str]]]) -> tuple[str, str, list[Line]]:
+        """주문을 검사하고 확인 토큰을 만든다. 주문도 재고 차감도 하지 않는다. (토큰, 만료 시각, 줄)
+
+        같은 사용자의 대기 중인 토큰은 무효로 한다. 확인 화면을 다시 열었으면 앞의 확인은 더 이상 유효하지 않다.
+        """
+        with self.order_lock:
+            lines = self._check_lines(items, indexed=True)
+            now = self.clock()
+            token = secrets.token_urlsafe(16)  # 추측할 수 없게 한다. 지어낸 토큰으로 주문되지 않아야 한다
+            expires = (now + TOKEN_TTL).isoformat(timespec="seconds")
+            try:
+                self.conn.execute("update order_tokens set status = 'REVOKED' where userId = ? and status = 'PENDING'", (user_id,))
+                self.conn.execute(
+                    "insert into order_tokens (token, userId, items, totalPrice, status, createdAt, expiresAt)"
+                    " values (?, ?, ?, ?, 'PENDING', ?, ?)",
+                    (token, user_id, json.dumps([asdict(x) for x in lines], ensure_ascii=False), sum(x.total for x in lines),
+                     now.isoformat(timespec="seconds"), expires))
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
+        return token, expires, lines
+
+    def confirm(self, user_id: str, token: str) -> tuple[list[dict], bool]:
+        """확인 토큰으로 주문을 확정한다. (주문 행들, 이미 확정됐었는지)
+
+        같은 토큰이 다시 오면(LLM 재시도·네트워크 재전송) 새로 만들지 않고 그때 만든 주문을 돌려준다.
+        """
+        with self.order_lock:
+            row = self.conn.execute("select * from order_tokens where token = ?", (token,)).fetchone()
+            # 다른 사용자의 토큰도 "없다"로 답한다. 토큰이 있다는 것조차 알려 주지 않는다
+            if row is None or row["userId"] != user_id:
+                raise OrderError(404, "TOKEN_NOT_FOUND", {"message": "주문 확인 토큰이 없다. 주문 확인부터 다시 한다"})
+            if row["status"] == "USED":
+                return self._orders_where("o.token = ?", (token,)), True
+            if row["status"] == "REVOKED":
+                raise OrderError(409, "TOKEN_REVOKED", {"message": "더 새로운 주문 확인이 있어 이 토큰은 무효다"})
+            now = self.clock()
+            if now >= datetime.fromisoformat(row["expiresAt"]):
+                raise OrderError(410, "TOKEN_EXPIRED", {"message": "주문 확인 시간(10분)이 지났다. 주문 확인부터 다시 한다"})
+
+            lines = [Line(**x) for x in json.loads(row["items"])]
+            # prepare 뒤에 품절되거나 다른 주문이 재고를 가져갔을 수 있어 다시 검사한다. 금액은 prepare 때 것을 쓴다
+            self._check_lines([(x.product_id, x.quantity, x.options) for x in lines], indexed=True)
+            try:
+                # 잠금 안이라 경쟁은 없지만, 토큰 상태 전이를 한 번 더 조건으로 건다: PENDING 에서 바꾼 한 번만 주문을 만든다
+                if self.conn.execute("update order_tokens set status = 'USED' where token = ? and status = 'PENDING'",
+                                     (token,)).rowcount != 1:
+                    self.conn.rollback()
+                    return self._orders_where("o.token = ?", (token,)), True
+                for x in lines:
+                    self._insert_order(user_id, x, now, token)
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
+        return self._orders_where("o.token = ?", (token,)), False
+
+    # ---- 주문 조회 ----
+
+    def _orders_where(self, where: str, params: tuple, limit: int = 100) -> list[dict]:
         rows = self.conn.execute(
             "select o.*, coalesce(p.name, '(단종된 상품)') as productName from orders o"
-            " left join products p on p.id = o.productId where o.userId = ? order by o.orderedAt desc limit ?",
-            (user_id, limit),
+            f" left join products p on p.id = o.productId where {where} order by o.orderedAt desc, o.rowid limit ?",
+            (*params, limit),
         ).fetchall()
         return [{**dict(r), "options": json.loads(r["options"] or "{}")} for r in rows]
+
+    def orders_of(self, user_id: str, limit: int) -> list[dict]:
+        return self._orders_where("o.userId = ?", (user_id,), limit)
 
 
 def _num(x: float) -> int | float:
