@@ -1,0 +1,3 @@
+[
+  {"productId": "p04001", "productName": "물티슈 대용량 100매 10팩", "brand": "포근결", "category": {"main": "living", "mid": "tissue", "sub": "wet-wipes"}, "origin": "국산", "audience": "general", "isGift": false, "pricing": {"price": 12900, "originalPrice": null}, "spec": {"text": "100매 × 10팩", "quantity": 10, "unit": "팩"}, "delivery": {"isRocket": false, "isFreeShipping": false, "shippingFee": 3000, "deliveryDays": 3}, "stats": {"salesCount30d": 3291, "salesCountTotal": 46080, "rating": 4.6, "reviewCount": 5120, "repurchaseRate": 49}, "content": {"description": "도톰한 물티슈 열 팩 묶음이에요.", "reviewSummary": null, "tags": ["물티슈", "휴지", "닦는 거", "대용량", "아기 물티슈", "티슈"]}, "stock": {"status": "in_stock", "quantity": 380}, "productImage": null, "source": "synthetic"}
+]
