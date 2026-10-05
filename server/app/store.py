@@ -110,9 +110,13 @@ class Store:
             if row is None:
                 raise ValueError(f"seed_orders 의 없는 상품: {o.productId}")
             self.conn.execute(
-                "insert or ignore into orders (orderId, userId, productId, quantity, totalPrice, orderedAt) values (?, ?, ?, ?, ?, ?)",
-                (o.orderId, o.userId, o.productId, o.quantity, row["price"] * o.quantity + row["shipping_fee"], o.orderedAt),
+                "insert or ignore into orders (orderId, userId, productId, quantity, totalPrice, orderedAt, status, unitPrice, shippingFee)"
+                " values (?, ?, ?, ?, ?, ?, 'DELIVERED', ?, ?)",
+                (o.orderId, o.userId, o.productId, o.quantity, row["price"] * o.quantity + row["shipping_fee"], o.orderedAt,
+                 row["price"], row["shipping_fee"]),
             )
+            # 시드의 지난 구매는 이미 받은 것으로 본다(취소할 수 없다). status 열이 생기기 전에 들어간 행도 고친다
+            self.conn.execute("update orders set status = 'DELIVERED' where orderId = ? and status = 'CONFIRMED'", (o.orderId,))
         # 시드로 다시 만든 재고에 지금까지의 주문·취소를 반영한다. 시드에서 사라진 상품의 기록은 건너뛴다
         for r in self.conn.execute("select productId, sum(delta) as d from stock_ledger group by productId").fetchall():
             self._set_stock(r["productId"], r["d"])
@@ -438,6 +442,34 @@ class Store:
                 self.conn.rollback()
                 raise
         return self._orders_where("o.token = ?", (token,)), False
+
+    # ---- 취소 ----
+
+    def cancel(self, user_id: str, order_id: str) -> dict:
+        """확정된 주문 한 줄을 취소하고 재고를 돌려놓는다. 취소한 주문 행을 돌려준다."""
+        with self.order_lock:
+            rows = self._orders_where("o.orderId = ?", (order_id,))
+            # 다른 사용자의 주문도 "없다"로 답한다
+            if not rows or rows[0]["userId"] != user_id:
+                raise OrderError(404, "ORDER_NOT_FOUND", {"message": f"없는 주문: {order_id}"})
+            row = rows[0]
+            if row["status"] == "CANCELLED":
+                raise OrderError(409, "ALREADY_CANCELLED", {"message": "이미 취소한 주문이다"})
+            if row["status"] != "CONFIRMED":
+                raise OrderError(409, "NOT_CANCELLABLE", {"message": "배송이 끝난 주문은 취소할 수 없다"})
+            now = self.clock()
+            try:
+                self.conn.execute("update orders set status = 'CANCELLED', cancelledAt = ? where orderId = ?",
+                                  (now.isoformat(timespec="seconds"), order_id))
+                # 이 주문으로 줄어든 만큼만 돌려놓는다. 재고 기록이 생기기 전의 주문은 줄인 적이 없으므로 그대로 둔다
+                taken = self.conn.execute("select coalesce(sum(delta), 0) from stock_ledger where orderId = ?", (order_id,)).fetchone()[0]
+                if taken < 0:
+                    self._move_stock(row["productId"], -taken, order_id, "CANCEL", now)
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
+        return self._orders_where("o.orderId = ?", (order_id,))[0]
 
     # ---- 주문 조회 ----
 

@@ -25,6 +25,8 @@ from . import docs, order_docs
 from .models import (
     BatchOrderIn,
     BatchOrderOut,
+    CancelIn,
+    CancelOut,
     CategoryOut,
     ConfirmIn,
     ConfirmOut,
@@ -203,6 +205,18 @@ def create_app(
             raise HTTPException(status_code=e.status, detail=e.detail) from e
         orders = [OrderOut(**r) for r in rows]
         return ConfirmOut(orders=orders, totalPrice=sum(o.totalPrice for o in orders), alreadyConfirmed=already)
+
+    @app.post("/orders/{order_id}/cancel", tags=["주문"], dependencies=auth, **{**order_docs.CANCEL, "responses": {
+        **docs.UNAUTHORIZED, **order_docs.CANCEL["responses"]}})
+    def cancel_order(
+        order_id: Annotated[str, PathParam(description="주문번호", examples=["M-20261005-5080"])],
+        body: CancelIn,
+    ) -> CancelOut:
+        try:
+            row = store.cancel(body.userId, order_id)
+        except OrderError as e:
+            raise HTTPException(status_code=e.status, detail=e.detail) from e
+        return CancelOut(order=OrderOut(**row), cancelledAt=row["cancelledAt"], refundPrice=row["totalPrice"])
 
     @app.get("/users/{user_id}/orders", tags=["주문"], summary="구매 이력", dependencies=auth, responses=docs.UNAUTHORIZED)
     def orders(

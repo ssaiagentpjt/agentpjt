@@ -290,6 +290,8 @@ class OrderOut(BaseModel):
     options: dict[str, str] = Field(description="고른 옵션")
     totalPrice: int = Field(description="합계(원) = (가격 + 옵션 추가 금액) × 수량 + 배송비")
     orderedAt: str = Field(description="주문 시각(KST, ISO 8601)")
+    status: Literal["CONFIRMED", "CANCELLED", "DELIVERED"] = Field(
+        default="CONFIRMED", description="CONFIRMED 주문됨(취소 가능) · CANCELLED 취소됨 · DELIVERED 배송 완료(시드의 지난 구매)")
 
 
 class OrderItemIn(BaseModel):
@@ -365,3 +367,18 @@ class ConfirmOut(BaseModel):
     orders: list[OrderOut] = Field(description="줄마다 하나씩 만든 주문(prepare 의 줄 순서)")
     totalPrice: int
     alreadyConfirmed: bool = Field(description="이미 확정된 토큰이면 true. 새 주문 없이 그때 만든 주문을 그대로 돌려준다")
+
+
+# ---- 취소 --------------------------------------------------------------------
+
+
+class CancelIn(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"examples": [{"userId": "u001"}]})
+
+    userId: str = Field(min_length=1, max_length=40, description="주문한 사용자 id")
+
+
+class CancelOut(BaseModel):
+    order: OrderOut = Field(description="취소한 주문(status 가 CANCELLED)")
+    cancelledAt: str = Field(description="취소 시각(KST, ISO 8601)")
+    refundPrice: int = Field(description="돌려줄 금액(원). 목업이라 실제 환불은 없다")

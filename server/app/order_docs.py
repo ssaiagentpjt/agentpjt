@@ -55,3 +55,16 @@ CONFIRM = {
             "code": "TOKEN_EXPIRED", "message": "주문 확인 시간(10분)이 지났다. 주문 확인부터 다시 한다"}),
     },
 }
+
+CANCEL = {
+    "summary": "주문 취소",
+    "description": (
+        "주문 한 줄을 취소하고 **재고를 돌려놓습니다.** 여러 상품을 한꺼번에 주문했으면 줄마다 부릅니다.\n\n"
+        "- 취소할 수 있는 것은 `status` 가 `CONFIRMED` 인 주문뿐입니다\n"
+        "- 이미 취소한 주문은 409 `ALREADY_CANCELLED`, 배송이 끝난 지난 구매는 409 `NOT_CANCELLABLE`"
+    ),
+    "responses": {
+        **_error(404, "없는 주문·다른 사용자의 주문", {"code": "ORDER_NOT_FOUND", "message": "없는 주문: M-20261005-0000"}),
+        **_error(409, "이미 취소했거나 배송이 끝난 주문", {"code": "ALREADY_CANCELLED", "message": "이미 취소한 주문이다"}),
+    },
+}

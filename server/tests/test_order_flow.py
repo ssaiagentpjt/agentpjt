@@ -243,3 +243,77 @@ def test_confirm_keeps_prepared_price(client, db_path):
     with sqlite3.connect(db_path) as conn:
         conn.execute("update products set price = 99000 where id = 'p03003'")
     assert confirm(client, token).json()["orders"][0]["totalPrice"] == 18_500 + 3_000
+
+
+# ---- 취소 (G-03) ----
+
+
+def cancel(client, order_id, user="u1"):
+    return client.post(f"/orders/{order_id}/cancel", headers=KEY, json={"userId": user})
+
+
+def test_cancel_restores_stock(client, clock):
+    before = stock(client, "p03007")
+    token = prepare(client, ("p03007", 8, {})).json()["confirmToken"]
+    oid = confirm(client, token).json()["orders"][0]["orderId"]
+    assert stock(client, "p03007")["status"] == "sold_out"
+    clock.advance(minutes=3)
+    r = cancel(client, oid)
+    body = r.json()
+    assert r.status_code == 200
+    assert (body["order"]["status"], body["cancelledAt"], body["refundPrice"]) == ("CANCELLED", "2026-10-05T14:03:00+09:00", 24_000 * 8)
+    assert stock(client, "p03007") == before
+    assert history(client)[0]["status"] == "CANCELLED"
+
+
+def test_second_cancel_is_conflict(client):
+    oid = order(client, "p03003", qty=2).json()["orderId"]
+    before = stock(client, "p03003")["quantity"]
+    assert cancel(client, oid).status_code == 200
+    r = cancel(client, oid)
+    assert (r.status_code, r.json()["detail"]["code"]) == (409, "ALREADY_CANCELLED")
+    assert stock(client, "p03003")["quantity"] == before + 2  # 한 번만 돌려놓는다
+
+
+def test_seed_orders_are_delivered_and_not_cancellable(client):
+    seeded = history(client, "u001")
+    assert {o["status"] for o in seeded} == {"DELIVERED"}
+    r = cancel(client, seeded[0]["orderId"], user="u001")
+    assert (r.status_code, r.json()["detail"]["code"]) == (409, "NOT_CANCELLABLE")
+
+
+def test_cannot_cancel_unknown_or_others_order(client):
+    oid = order(client, "p03003", user="u1").json()["orderId"]
+    for order_id, user in [("M-20261005-0000", "u1"), (oid, "u2")]:
+        r = cancel(client, order_id, user)
+        assert (r.status_code, r.json()["detail"]["code"]) == (404, "ORDER_NOT_FOUND")
+    assert history(client)[0]["status"] == "CONFIRMED"
+
+
+def test_cancel_one_line_of_batch(client):
+    before = stock(client, "p03003")["quantity"]
+    token = prepare(client, ("p03003", 1, {}), ("p07002", 1, {"사이즈": "M"})).json()["confirmToken"]
+    first, second = confirm(client, token).json()["orders"]
+    assert cancel(client, second["orderId"]).status_code == 200
+    statuses = {o["orderId"]: o["status"] for o in history(client)}
+    assert statuses == {first["orderId"]: "CONFIRMED", second["orderId"]: "CANCELLED"}
+    assert stock(client, "p03003")["quantity"] == before - 1
+
+
+def test_cancelled_stock_survives_restart(db_path, clock):
+    c1 = TestClient(create_app(data_dir=FIXTURES, db_path=db_path, api_key="k", clock=clock))
+    oid = order(c1, "p03007", qty=5).json()["orderId"]
+    assert cancel(c1, oid).status_code == 200
+    c2 = TestClient(create_app(data_dir=FIXTURES, db_path=db_path, api_key="k", clock=clock))
+    assert stock(c2, "p03007") == {"status": "low", "quantity": 8}
+
+
+def test_order_without_ledger_cancels_without_restock(db_path, clock):
+    # 재고 기록이 생기기 전에 들어간 주문(옛 DB)은 줄인 적이 없으므로 취소해도 재고를 늘리지 않는다
+    c1 = TestClient(create_app(data_dir=FIXTURES, db_path=db_path, api_key="k", clock=clock))
+    before = stock(c1, "p03003")["quantity"]
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("insert into orders (orderId, userId, productId, quantity, totalPrice, orderedAt)"
+                     " values ('M-OLD-1', 'u1', 'p03003', 2, 40000, '2026-10-01T10:00:00+09:00')")
+    assert cancel(c1, "M-OLD-1").status_code == 200
+    assert stock(c1, "p03003")["quantity"] == before
