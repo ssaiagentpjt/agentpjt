@@ -31,6 +31,8 @@ android {
         versionName = (findProperty("appVersion") as String?) ?: "0.1.0"
         buildConfigField("String", "SHOP_API_BASE_URL", "\"${local("shop.apiBaseUrl", "https://shop-api.bomun.dev")}\"")
         buildConfigField("String", "SHOP_API_KEY", "\"${local("shop.apiKey", "")}\"")
+        // 개발용 일괄 시험(adb 로 문장 목록을 돌린다). 로컬에서 -PdevHooks=true 일 때만 켜고 CI 릴리스에는 들어가지 않는다
+        buildConfigField("boolean", "DEV_HOOKS", ((findProperty("devHooks") as String?) == "true").toString())
     }
 
     signingConfigs {
