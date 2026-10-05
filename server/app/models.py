@@ -265,7 +265,7 @@ class SearchOut(BaseModel):
 
 class HealthOut(BaseModel):
     ok: bool
-    version: str = Field(examples=["0.4.1"])
+    version: str = Field(examples=["0.4.2"])
     products: int = Field(description="적재된 상품 수", examples=[2974])
 
 

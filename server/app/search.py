@@ -70,10 +70,10 @@ def search(
     params: dict = {f"t{i}": tok for i, tok in enumerate(tokens)}
     if tokens:
         keys = list(params)
-        score_sql = " + ".join(_token_score(k) for k in keys)
-        score_sql += f" + (({' + '.join(_token_hit(k) for k in keys)}) = {len(keys)}) * {W_ALL_TOKENS}"
+        all_hit_sql = f"(({' + '.join(_token_hit(k) for k in keys)}) = {len(keys)})"
+        score_sql = " + ".join(_token_score(k) for k in keys) + f" + {all_hit_sql} * {W_ALL_TOKENS}"
     else:
-        score_sql = "0"
+        all_hit_sql = score_sql = "0"
 
     where = []
     for i, (col, val) in enumerate((("p.main_id", main), ("p.mid_id", mid), ("p.sub_id", sub), ("p.audience", audience))):
@@ -96,7 +96,7 @@ def search(
         where.append("p.stock_status != 'sold_out'")
 
     inner = f"""
-      select p.id, ({score_sql}) as score, p.price, st.sales_30d, st.rating, st.review_count,
+      select p.id, ({score_sql}) as score, ({all_hit_sql}) as all_hit, p.price, st.sales_30d, st.rating, st.review_count,
              m.discount_rate, m.unit_price
       from products p
       join product_search s on s.product_id = p.id
@@ -104,6 +104,11 @@ def search(
       join product_metrics m on m.product_id = p.id
       {"where " + " and ".join(where) if where else ""}
     """
-    sql = f"select id from ({inner}) {'where score > 0' if tokens else ''} order by {_ORDER_BY[sort]}, id"
-    ids = [r[0] for r in conn.execute(sql, params)]
+    sql = f"select id, all_hit from ({inner}) {'where score > 0' if tokens else ''} order by {_ORDER_BY[sort]}, id"
+    rows = conn.execute(sql, params).fetchall()
+    # relevance 가 아닌 정렬은 점수를 보지 않아서 "무릎 파스"를 평점순으로 찾으면 '무릎'만 맞은 영양제가 위로 온다.
+    # 모든 낱말이 맞은 상품이 있으면 그것만 남긴다(AND). 없으면 하나라도 맞은 상품으로 물러난다(OR).
+    if tokens and sort != "relevance" and any(r[1] for r in rows):
+        rows = [r for r in rows if r[1]]
+    ids = [r[0] for r in rows]
     return len(ids), ids[:limit]

@@ -24,7 +24,7 @@ from .models import CategoryOut, HealthOut, OrderIn, OrderOut, ProductCompact, P
 from .search import Audience, Sort, Tier
 from .store import DEFAULT_DATA_DIR, STATIC_DIR, OrderError, Store
 
-VERSION = "0.4.1"
+VERSION = "0.4.2"
 View = Literal["compact", "full"]
 log = logging.getLogger("shop")
 

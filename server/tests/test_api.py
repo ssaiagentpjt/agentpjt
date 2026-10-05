@@ -120,3 +120,13 @@ def test_restart_keeps_orders_and_reloads_products(tmp_path):
     c2 = TestClient(create_app(data_dir=FIXTURES, db_path=db_path, api_key=None))
     assert c2.get("/users/u9/orders").json()[0]["orderId"] == oid
     assert c2.get("/health").json()["products"] == 28
+
+
+def test_sort_keeps_products_matching_every_word(client):
+    # 평점순이어도 '무릎'만 맞은 보호대보다 '무릎'·'파스'가 다 맞은 상품만 남는다
+    body = client.get("/products/search", params={"q": "무릎 파스", "sort": "rating", "limit": 30}, headers=KEY).json()
+    ids = [p["id"] for p in body["products"]]
+    assert "p03005" in ids and "p07002" not in ids
+    # 모든 낱말이 맞는 상품이 없으면 하나라도 맞는 상품으로 물러난다
+    fallback = client.get("/products/search", params={"q": "무릎 햅쌀", "sort": "rating"}, headers=KEY).json()
+    assert fallback["total"] >= 2
