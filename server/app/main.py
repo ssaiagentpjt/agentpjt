@@ -31,7 +31,7 @@ def create_app(
     public_base_url: str | None = None,
 ) -> FastAPI:
     store = Store(data_dir, db_path)
-    app = FastAPI(title="말로장보기 목업 상품 API", version=VERSION)
+    app = FastAPI(title="손주야 목업 상품 API", version=VERSION)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     if not api_key:
         log.warning("SHOP_API_KEY 가 비어 있어 인증 없이 열려 있다 (개발용)")

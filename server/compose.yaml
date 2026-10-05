@@ -1,3 +1,4 @@
+# 로컬에서 직접 빌드해 띄울 때 쓴다. 홈서버 운영용은 server/deploy/compose.yaml(GHCR 이미지 + 터널 + watchtower).
 name: agentpjt-shop
 
 services:
@@ -6,7 +7,7 @@ services:
     image: agentpjt-shop-api:latest
     restart: unless-stopped
     ports:
-      # 홈서버에서는 리버스 프록시만 붙도록 127.0.0.1 로 묶는다
+      # 로컬 PC 밖에서 접근하지 못하게 127.0.0.1 로 묶는다
       - "127.0.0.1:8000:8000"
     environment:
       SHOP_API_KEY: ${SHOP_API_KEY:?SHOP_API_KEY 를 .env 또는 환경변수로 지정해야 한다}
