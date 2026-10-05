@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -66,6 +67,8 @@ fun ShopFrame(
     s: ShopState,
     nav: Nav,
     dock: @Composable ColumnScope.() -> Unit,
+    /** false 면 내용이 스스로 스크롤한다(처음 화면 대화 기록의 LazyColumn) */
+    scrollable: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = ShopTheme.colors
@@ -73,13 +76,19 @@ fun ShopFrame(
     val canType = s.screen != Screen.Listening
     Box(Modifier.fillMaxSize().imePadding(), contentAlignment = Alignment.TopCenter) {
         Column(Modifier.widthIn(max = MAX_CONTENT_WIDTH).fillMaxSize()) {
-            TopBar(s, nav.home, nav.cart, nav.history, nav.devMenu)
-            TalkStrip(s)
-            Column(
-                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-                content = content,
-            )
+            TopBar(s, nav)
+            // 처음 화면은 대화 기록이 같은 일을 하므로 대화 띠를 두지 않는다
+            if (s.screen != Screen.Home) TalkStrip(s)
+            if (scrollable) {
+                val scroll = rememberScrollState()
+                Column(
+                    Modifier.weight(1f).minimalScrollbar(scroll, c.inkSoft).verticalScroll(scroll).padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    content = content,
+                )
+            } else {
+                Column(Modifier.weight(1f), content = content)
+            }
             HorizontalDivider(color = c.line)
             Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (canType && s.typing) {
@@ -151,7 +160,7 @@ private fun KeyboardIcon(tint: Color) {
 
 /** 맨 위: 이름(누르면 처음 화면) + 그림·글자가 함께 있는 큰 버튼(장바구니·주문 내역) */
 @Composable
-private fun TopBar(s: ShopState, onHome: () -> Unit, onCart: () -> Unit, onHistory: () -> Unit, onDevMenu: () -> Unit) {
+private fun TopBar(s: ShopState, nav: Nav) {
     val c = ShopTheme.colors
     // 담거나 빼면 장바구니 버튼을 잠깐 강조한다(말로 바꿔도 바뀐 것이 보이게)
     val signature = s.cart.map { it.lineId to it.qty }
@@ -171,12 +180,19 @@ private fun TopBar(s: ShopState, onHome: () -> Unit, onCart: () -> Unit, onHisto
     ) {
         // 이름을 길게 누르면 개발자 메뉴(Gemma 테스트). 어르신이 우연히 누를 일은 드물다
         Text(
-            "손주야", Modifier.weight(1f).pointerInput(Unit) { detectTapGestures(onTap = { onHome() }, onLongPress = { onDevMenu() }) },
+            "손주야", Modifier.pointerInput(Unit) { detectTapGestures(onTap = { nav.home() }, onLongPress = { nav.devMenu() }) },
             fontSize = 22.sp, fontWeight = FontWeight.Black, color = c.ink,
         )
+        // 말하는 법 도움말. 이름 바로 옆 같은 자리
+        Box(
+            Modifier.padding(start = 8.dp).size(44.dp).clip(CircleShape).border(2.dp, c.line, CircleShape)
+                .clickable(role = Role.Button, onClickLabel = "도움말", onClick = nav.help),
+            contentAlignment = Alignment.Center,
+        ) { Text("?", fontSize = 20.sp, fontWeight = FontWeight.Black, color = c.ink) }
+        Spacer(Modifier.weight(1f))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NavButton("장바구니", on = s.screen == Screen.Cart, bump = bump, badge = s.cart.size, onClick = onCart) { CartIcon(it) }
-            NavButton("주문 내역", on = s.screen == Screen.History, bump = false, badge = 0, onClick = onHistory) { ReceiptIcon(it) }
+            NavButton("장바구니", on = s.screen == Screen.Cart, bump = bump, badge = s.cart.size, onClick = nav.cart) { CartIcon(it) }
+            NavButton("주문 내역", on = s.screen == Screen.History, bump = false, badge = 0, onClick = nav.history) { ReceiptIcon(it) }
         }
     }
 }

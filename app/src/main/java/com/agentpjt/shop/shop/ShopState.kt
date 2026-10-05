@@ -34,6 +34,29 @@ const val DEMO_USER_NAME = "홍길순"
  */
 data class KnownProduct(val id: String, val name: String, val options: Map<String, List<String>> = emptyMap())
 
+/** 처음 화면 대화 기록의 말풍선. 손주야(AI)는 왼쪽, 어르신(USER)은 오른쪽, SYSTEM 은 가운데 구분선 */
+data class ChatMsg(
+    val id: Long,
+    val from: From,
+    val text: String,
+    val typed: Boolean = false,
+    val ask: Boolean = false,
+    val link: ChatLink? = null,
+) {
+    enum class From { AI, USER, SYSTEM }
+}
+
+/** 손주야가 화면을 바꿨던 말풍선에서 그 화면으로 돌아가는 길. 추천은 그때 목록을 그대로 담는다 */
+sealed interface ChatLink {
+    data class Results(val label: String, val products: List<ProductSummary>) : ChatLink
+    data class Product(val id: String, val name: String) : ChatLink
+    data object Cart : ChatLink
+    data object History : ChatLink
+}
+
+/** 대화 기록은 최근 이만큼만 둔다(메모리에만, 앱을 끄면 사라진다) */
+const val MAX_LOG = 50
+
 /** 에이전트가 한 단계에서 하는 일. 찾는 중 화면에 쌓인다(앞 단계는 done 글로 보인다) */
 data class Step(val doing: String, val done: String)
 
@@ -88,6 +111,10 @@ data class ShopState(
     val heardTyped: Boolean = false,
     /** 글자로 쓰기 입력 칸이 열려 있다 */
     val typing: Boolean = false,
+    /** 처음 화면 대화 기록 */
+    val log: List<ChatMsg> = emptyList(),
+    /** "?" 도움말 시트가 열려 있다 */
+    val helpOpen: Boolean = false,
     /** 대화 띠: 손주야가 마지막으로 한 말(앱 대본의 첫 문장, 또는 ask·answer) */
     val said: String = "",
     /** 손주야가 화면을 바꾸지 않고 한 말(ask·answer). 말풍선으로 보인다 */
@@ -114,7 +141,15 @@ data class ShopState(
     }
 
     /** 처음 화면으로: 세션 상태는 비우고 장바구니와 앱 상태만 남긴다 */
-    fun freshSession(): ShopState = ShopState(ai = ai, micDenied = micDenied, cart = cart, setup = setup)
+    fun freshSession(): ShopState = ShopState(ai = ai, micDenied = micDenied, cart = cart, setup = setup, log = log)
+
+    /** 말풍선을 쌓는다. 바로 앞과 같은 손주야 말·구분선은 다시 쌓지 않는다(같은 화면 대본이 되풀이될 때). 어르신 말은 늘 쌓는다 */
+    fun withMessage(msg: ChatMsg): ShopState {
+        val last = log.lastOrNull()
+        if (msg.from != ChatMsg.From.USER && last != null && last.from == msg.from && last.text == msg.text) return this
+        if (msg.from == ChatMsg.From.SYSTEM && (last == null || last.from == ChatMsg.From.SYSTEM)) return this // 빈 기록 맨 앞이나 연속 구분선은 두지 않는다
+        return copy(log = (log + msg).takeLast(MAX_LOG))
+    }
 }
 
 fun ProductSummary.known() = KnownProduct(id, name, options)

@@ -90,7 +90,7 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
                 freeBytes = installer.freeBytes(), connected = connected, unmetered = unmetered,
             ))
         }
-        say(if (error != null) Scripts.setupFailed(error) else Scripts.setupNeeded())
+        say(if (error != null) Scripts.setupFailed(error) else Scripts.setupNeeded(), log = false)
     }
 
     /** 설치 안내 화면의 "설치하기"·실패 화면의 "다시 받기" */
@@ -244,7 +244,8 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
     private fun runAgent(heard: String) {
         val a = agent ?: return
         _state.update { it.copy(heard = heard, lastHeard = heard, agentBusy = true, steps = listOf(Step("말씀을 알아듣고 있어요", "말씀을 알아들었어요"))) }
-        say(Scripts.thinking())
+        logUser(heard, _state.value.heardTyped)
+        say(Scripts.thinking(), log = false)
         agentJob = viewModelScope.launch {
             val before = _state.value
             val turn = try {
@@ -272,13 +273,14 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
             .copy(agentBusy = false, heard = "", steps = emptyList(), bubble = "", missingOption = null)
         when (turn) {
             is AgentTurn.Moved -> {
-                _state.value = st
+                if (st.screen == Screen.Home && returnTo != Screen.Home) logRestart()
+                _state.value = st.copy(log = _state.value.log)
                 speakScreen()
                 if (st.screen == Screen.Home) viewModelScope.launch { agent?.reset() } // 쇼핑 세션마다 대화를 새로 연다
             }
             is AgentTurn.Said -> {
                 _state.value = st.copy(bubble = SpeechText.clean(turn.text))
-                say(Scripts.say(turn.text))
+                say(Scripts.say(turn.text), ask = true)
             }
             is AgentTurn.Failed -> {
                 _state.value = st
@@ -378,10 +380,51 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
 
     fun stopReading() = speaker.stop()
 
-    /** 읽고, 첫 문장을 대화 띠에 남긴다. 들리는 말과 보이는 말이 같게 한다 */
-    private fun say(lines: List<Utterance>) {
-        _state.update { it.copy(said = lines.firstOrNull()?.text.orEmpty()) }
+    private var msgId = 0L
+
+    /**
+     * 읽고, 첫 문장을 대화 띠와 처음 화면 대화 기록에 남긴다. 들리는 말과 보이는 말이 같게 한다.
+     * [link] 는 그 말풍선에서 돌아갈 화면, [ask] 는 묻거나 답하는 말(노란 말풍선), [log] 가 false 면 기록에 남기지 않는다(“알아볼게요” 같은 추임새).
+     */
+    private fun say(lines: List<Utterance>, link: ChatLink? = null, ask: Boolean = false, log: Boolean = true) {
+        val first = lines.firstOrNull()?.text.orEmpty()
+        _state.update {
+            val s = it.copy(said = first)
+            if (log && first.isNotEmpty()) s.withMessage(ChatMsg(++msgId, ChatMsg.From.AI, first, ask = ask, link = link)) else s
+        }
         speaker.speak(lines)
+    }
+
+    private fun logUser(text: String, typed: Boolean) =
+        _state.update { it.withMessage(ChatMsg(++msgId, ChatMsg.From.USER, text, typed = typed)) }
+
+    /** 처음으로 돌아갈 때: 모델 대화가 새로 열리니 기록에 구분선을 둔다(보이는 기록과 모델 기억이 다르다는 것을 숨기지 않는다) */
+    private fun logRestart() = _state.update { it.withMessage(ChatMsg(++msgId, ChatMsg.From.SYSTEM, "새로 시작했어요")) }
+
+    fun openHelp() {
+        speaker.stop()
+        _state.update { it.copy(helpOpen = true) }
+    }
+
+    fun closeHelp() = _state.update { it.copy(helpOpen = false) }
+
+    /** 도움말 예시를 누르면 시트를 닫고 그 말로 시작한다 */
+    fun tryExample(text: String) {
+        closeHelp()
+        submitText(text)
+    }
+
+    /** 말풍선의 "다시 보기". 추천은 그때 목록을 그대로 다시 연다(서버를 다시 부르지 않는다) */
+    fun openLink(link: ChatLink) {
+        when (link) {
+            is ChatLink.Results -> {
+                _state.update { it.copy(screen = Screen.Results, shown = link.products, label = link.label, bubble = "") }
+                speakScreen()
+            }
+            is ChatLink.Product -> touch(Action.Open(link.id), null)
+            ChatLink.Cart -> touch(Action.ShowCart, null)
+            ChatLink.History -> touch(Action.ShowHistory, null)
+        }
     }
 
     fun openDevMenu() {
@@ -392,6 +435,7 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
     /** 화면을 바꾸고 그 화면의 대본을 읽는다. */
     fun go(screen: Screen, speak: Boolean = true) {
         if (screen == Screen.Home) {
+            if (_state.value.screen != Screen.Home) logRestart()
             _state.update { it.freshSession() }
             viewModelScope.launch { agent?.reset() } // 쇼핑 세션마다 대화를 새로 연다
         } else {
@@ -405,12 +449,12 @@ class ShopViewModel(app: Application) : AndroidViewModel(app) {
         val p = s.current
         when (s.screen) {
             Screen.Home -> say(Scripts.home())
-            Screen.Results -> say(Scripts.results(s.label, s.shown))
-            Screen.Detail -> p?.let { say(Scripts.detail(it, s.selected)) }
-            Screen.Cart -> say(Scripts.cart(s.cart))
+            Screen.Results -> say(Scripts.results(s.label, s.shown), link = ChatLink.Results(s.label, s.shown))
+            Screen.Detail -> p?.let { say(Scripts.detail(it, s.selected), link = ChatLink.Product(it.id, it.name)) }
+            Screen.Cart -> say(Scripts.cart(s.cart), link = ChatLink.Cart)
             Screen.Confirm -> say(Scripts.confirm(s.cart))
             Screen.Done -> say(Scripts.done(s.orderIds.size))
-            Screen.History -> say(Scripts.history(s.pastOrders))
+            Screen.History -> say(Scripts.history(s.pastOrders), link = ChatLink.History)
             Screen.Listening, Screen.DevLlm -> speaker.stop()
         }
     }

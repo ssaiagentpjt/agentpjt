@@ -11,7 +11,9 @@ private val ORDINALS = listOf("첫", "두", "세")
 object Scripts {
 
     fun home() = listOf(
-        Utterance("home", "안녕하세요, 손주야예요. 무엇을 사 드릴까요? 화면 아래 파란 버튼을 누르고 말씀해 주세요."),
+        // 첫 문장은 처음 화면 대화 기록의 첫 말풍선이 된다. 버튼 안내는 소리로만 덧붙인다
+        Utterance("home", "안녕하세요, 손주야예요. 무엇을 사 드릴까요?"),
+        Utterance("home-guide", "화면 아래 파란 버튼을 누르고 말씀해 주세요."),
     )
 
     fun setupNeeded() = listOf(

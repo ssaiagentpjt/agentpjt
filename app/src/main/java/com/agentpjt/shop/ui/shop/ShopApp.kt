@@ -79,11 +79,12 @@ fun ShopApp(vm: ShopViewModel = viewModel()) {
         }
         val nav = Nav(
             home = { vm.go(Screen.Home) }, cart = vm::openCart, history = vm::openHistory, devMenu = vm::openDevMenu,
-            openTyping = vm::openTyping, closeTyping = vm::closeTyping, sendTyped = vm::submitTyped,
+            openTyping = vm::openTyping, closeTyping = vm::closeTyping, sendTyped = vm::submitTyped, help = vm::openHelp,
         )
+        if (s.helpOpen) HelpSheet(enabled = s.ai == AiStatus.READY && !s.agentBusy, onExample = vm::tryExample, onClose = vm::closeHelp)
         Box(Modifier.weight(1f)) {
             when (s.screen) {
-                Screen.Home -> HomeScreen(s, nav, onMic = onMic, onExample = vm::submitText)
+                Screen.Home -> HomeScreen(s, nav, onMic = onMic, onLink = vm::openLink)
                 Screen.Listening -> ListeningScreen(s, nav, pauseUntil, onDone = vm::finishListening, onCancel = vm::cancelListening)
                 Screen.Results -> ResultsScreen(s, nav, speaking, onPick = vm::pick, onAdd = vm::addShown, onStopReading = vm::stopReading, onMic = onMic)
                 Screen.Detail -> DetailScreen(

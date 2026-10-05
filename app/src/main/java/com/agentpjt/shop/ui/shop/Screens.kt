@@ -11,6 +11,11 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -48,6 +53,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.agentpjt.shop.shop.CartLine
+import com.agentpjt.shop.shop.ChatLink
+import com.agentpjt.shop.shop.ChatMsg
 import com.agentpjt.shop.shop.DEMO_USER_NAME
 import com.agentpjt.shop.shop.ITEM_PREFIX
 import com.agentpjt.shop.shop.PastOrder
@@ -65,6 +72,7 @@ data class Nav(
     val cart: () -> Unit,
     val history: () -> Unit,
     val devMenu: () -> Unit,
+    val help: () -> Unit,
     val openTyping: () -> Unit,
     val closeTyping: () -> Unit,
     val sendTyped: (String) -> Unit,
@@ -72,38 +80,77 @@ data class Nav(
 
 @Composable
 private fun Frame(s: ShopState, nav: Nav, dock: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) =
-    ShopFrame(s, nav, dock, content)
+    ShopFrame(s, nav, dock, content = content)
 
 @Composable
 private fun Title(text: String) {
     Text(text, style = MaterialTheme.typography.headlineMedium, color = ShopTheme.colors.ink)
 }
 
-// 1. 처음 화면 -------------------------------------------------------------
+// 1. 처음 화면: 대화 기록 ---------------------------------------------------
 
+/** 손주야는 왼쪽, 어르신은 오른쪽 말풍선으로 위에서 아래로 쌓인다. 새 말이 오면 맨 아래로 내려간다 */
 @Composable
-fun HomeScreen(s: ShopState, nav: Nav, onMic: () -> Unit, onExample: (String) -> Unit) {
+fun HomeScreen(s: ShopState, nav: Nav, onMic: () -> Unit, onLink: (ChatLink) -> Unit) {
     val c = ShopTheme.colors
-    Frame(s, nav, dock = { MicDock(s, onMic) }) {
-        Title("안녕하세요, $DEMO_USER_NAME 님")
-        Text("아래 파란 버튼을 누르고 편하게 말씀하세요.", fontSize = 18.sp, lineHeight = 26.sp, color = c.inkSoft)
-        Text("이렇게 말해 보세요", fontSize = 16.sp, color = c.inkSoft, modifier = Modifier.padding(top = 6.dp))
-        // 누르면 그 문장을 말한 것처럼 에이전트에 넘긴다. 말이 서툰 분과 시연을 위한 길.
-        EXAMPLES.forEach { ExampleSay(it, enabled = s.ai == com.agentpjt.shop.shop.AiStatus.READY && !s.agentBusy) { onExample(it) } }
+    val list = rememberLazyListState()
+    LaunchedEffect(s.log.size) { if (s.log.isNotEmpty()) list.animateScrollToItem(s.log.lastIndex) }
+    ShopFrame(s, nav, dock = { MicDock(s, onMic) }, scrollable = false) {
+        LazyColumn(
+            Modifier.fillMaxSize().minimalScrollbar(list, c.inkSoft),
+            state = list,
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            items(s.log, key = { it.id }) { m -> ChatBubble(m, enabled = !s.agentBusy, onLink = onLink) }
+        }
     }
 }
 
-private val EXAMPLES = listOf("아침에 먹을 만한 거 찾아 줘", "라디오 하나 오만 원 안쪽으로", "지난번에 산 거 또 사고 싶어")
-
 @Composable
-private fun ExampleSay(text: String, enabled: Boolean, onClick: () -> Unit) {
+private fun ChatBubble(m: ChatMsg, enabled: Boolean, onLink: (ChatLink) -> Unit) {
     val c = ShopTheme.colors
-    Text(
-        "“$text”",
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).border(2.dp, c.line, RoundedCornerShape(14.dp))
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick).padding(horizontal = 16.dp, vertical = 14.dp),
-        fontSize = 19.sp, fontWeight = FontWeight.Bold, color = if (enabled) c.ink else c.inkSoft,
-    )
+    when (m.from) {
+        ChatMsg.From.SYSTEM -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Text(m.text, Modifier.clip(RoundedCornerShape(50)).background(c.paper).padding(horizontal = 14.dp, vertical = 4.dp), fontSize = 14.sp, color = c.inkSoft)
+        }
+        ChatMsg.From.USER -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+            val shape = RoundedCornerShape(topStart = 18.dp, topEnd = 6.dp, bottomEnd = 18.dp, bottomStart = 18.dp)
+            Column(
+                Modifier.fillMaxWidth(0.84f).wrapContentWidth(Alignment.End).clip(shape).background(c.surface).border(2.dp, c.line, shape)
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+            ) {
+                Text(if (m.typed) "쓴 말" else "들은 말", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = c.inkSoft)
+                Text(m.text, fontSize = 19.sp, lineHeight = 27.sp, color = c.ink)
+            }
+        }
+        ChatMsg.From.AI -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+            val shape = RoundedCornerShape(topStart = 6.dp, topEnd = 18.dp, bottomEnd = 18.dp, bottomStart = 18.dp)
+            val fg = if (m.ask) c.speakInk else c.ink
+            Column(
+                Modifier.fillMaxWidth(0.84f).wrapContentWidth(Alignment.Start).clip(shape).background(if (m.ask) c.speak else c.voiceTint)
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+            ) {
+                Text("손주야", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (m.ask) c.speakInk else c.inkSoft)
+                Text(m.text, fontSize = 19.sp, lineHeight = 27.sp, fontWeight = FontWeight.Bold, color = fg)
+                m.link?.let { link ->
+                    Text(
+                        linkLabel(link) + " ›",
+                        Modifier.padding(top = 8.dp).clip(RoundedCornerShape(10.dp)).clickable(enabled = enabled, role = Role.Button) { onLink(link) }
+                            .padding(vertical = 6.dp),
+                        fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = c.voice,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun linkLabel(link: ChatLink) = when (link) {
+    is ChatLink.Results -> "${link.label} ${link.products.size}개 다시 보기"
+    is ChatLink.Product -> "${link.name} 다시 보기"
+    ChatLink.Cart -> "장바구니 보기"
+    ChatLink.History -> "주문 내역 보기"
 }
 
 // 2. 듣는 중 · 찾는 중 -------------------------------------------------------
